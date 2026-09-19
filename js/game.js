@@ -48,9 +48,15 @@ function segments(list, t, start = 0) {
   return null;
 }
 
-const SHAKE_A = 0.13;
-const SHAKE = [[0.05, SHAKE_A], [0.09, -SHAKE_A], [0.08, SHAKE_A * 0.7], [0.07, -SHAKE_A * 0.5], [0.05, 0], [0.45, 0]];
-const SHAKE_LEN = SHAKE.reduce((n, [d]) => n + d, 0);
+// Selected tiles shake like the original: a sharp kick that settles within ~0.3 s (measured at 30 fps
+// from the reference video), repeated every SHAKE_EVERY seconds while they stay selected.
+const SHAKE_EVERY = 0.9;
+function shakeAngle(t) {
+  t %= SHAKE_EVERY;
+  if (t > 0.36) return 0;
+  return 0.3 * Math.exp(-t / 0.1) * Math.sin(2 * Math.PI * 7 * t);
+}
+const TAP_POP = [[0.05, 1.14], [0.12, 1]];
 const WOBBLE = [[0.05, 0.16], [0.08, -0.11], [0.06, 0.05], [0.05, 0]];
 const PRESS = [[0.05, 0.9], [0.1, 1]];
 const POP = [[0.07, 1.15], [0.12, 1]];
@@ -279,6 +285,7 @@ export class Game {
     this.bestText = null;
     this.comboCanvas = null;
 
+    this.promoteSprites();
     const first = !this.built;
     this.built = true;
     this.cancelDrag();
@@ -303,6 +310,21 @@ export class Game {
       this.hinted = [];
       this.applySelectionVisuals();
     }
+  }
+
+  /** Safari draws ImageBitmaps faster than canvases; swap the per-frame sprites once they're ready. */
+  promoteSprites() {
+    if (typeof createImageBitmap !== 'function') return;
+    const gen = (this.spriteGen = (this.spriteGen ?? 0) + 1);
+    const lift = c => createImageBitmap(c).then(b => { b.w = c.w; b.h = c.h; return b; });
+    const fields = ['bg', 'tileSprite', 'tileLitSprite', 'dashes', 'girlSprite', 'leafSprite', 'sparkleSprite', 'glowSprite', 'ringSprite'];
+    Promise.all([...fields.map(f => lift(this[f])), ...this.emojiSprites.map(lift)])
+      .then(list => {
+        if (gen !== this.spriteGen) return; // a newer layout replaced these
+        fields.forEach((f, i) => { this[f] = list[i]; });
+        this.emojiSprites = list.slice(fields.length);
+      })
+      .catch(() => {});
   }
 
   point(p) { return { x: this.gridLeft + (p.c + 0.5) * this.cell, y: this.gridTop + (p.r + 0.5) * this.cell }; }
@@ -435,7 +457,7 @@ export class Game {
   makeTile(t, p) {
     const pt = this.point(p);
     return { id: t.id, kind: t.kind, x: pt.x, y: pt.y, rot: 0, scale: 1, alpha: 1, z: 0, lit: false,
-      shake: false, shakeT0: 0, pulse: false, pulseT0: 0, wobbleT0: -1, gone: false };
+      shake: false, shakeT0: 0, tapT0: -1, pulse: false, pulseT0: 0, wobbleT0: -1, gone: false };
   }
 
   rebuildTiles(animated) {
@@ -459,7 +481,7 @@ export class Game {
         this.anim.to(n, { alpha: 1 }, 0.15, { delay, key: 'alpha' });
       }
     }
-    if (animated) this.busyUntil = now() + 0.85;
+    if (animated) this.busyUntil = now() + 0.5;
   }
 
   placeGirl() {
@@ -528,6 +550,8 @@ export class Game {
 
     const p = this.cellAt(pt);
     if (p && this.board.get(p)) {
+      // React on touch-down (not release) so rapid taps each land instantly.
+      if (this.handleTap(p)) return; // matched: nothing left to drag
       this.touchOrigin = p;
       this.touchStart = pt;
     } else if (this.inBoard(pt)) {
@@ -602,11 +626,10 @@ export class Game {
   steps(d) { return Math.min(this.active(d).free, Math.round(Math.abs(d.offset) / this.cell)); }
 
   touchUp() {
-    const d = this.drag, p = this.touchOrigin;
+    const d = this.drag;
     this.touchOrigin = null;
     this.drag = null;
     if (d) this.finishDrag(d);
-    else if (p && !this.busy) this.handleTap(p);
   }
 
   cancelDrag() {
@@ -623,32 +646,31 @@ export class Game {
 
   // ------------------------------------------------------------ tapping
 
+  /** Returns true when the tap cleared a pair. */
   handleTap(p) {
-    if (!this.board.get(p)) return;
+    if (!this.board.get(p)) return false;
     this.clearHint();
     const s = this.selected;
-    if (s) {
-      if (samePos(s, p)) {
-        this.clearSelection();
-        sound.play('tap');
-        return;
-      }
-      if (this.board.touching(s, p)) {
-        this.clearSelection();
-        this.match(s, p);
-        return;
-      }
+    if (s && !samePos(s, p) && this.board.touching(s, p)) {
+      this.clearSelection();
+      this.match(s, p);
+      return true;
     }
     // One tap solves a pair only when the identical tile is right next to it.
     const partner = this.board.touchingPartner(p);
     if (partner) {
       this.clearSelection();
       this.match(p, partner);
-      return;
+      return true;
     }
+    // Every tap (including on an already-selected tile) restarts the shake right away,
+    // so tapping repeatedly keeps showing where the matching tiles are.
     this.select(p);
+    const n = this.node(p);
+    if (n) n.tapT0 = now();
     sound.play('tap');
     sound.buzz(10);
+    return false;
   }
 
   /** Selects `p`; it and every tile with the same icon turn yellow and keep shaking. */
@@ -704,7 +726,6 @@ export class Game {
       // A finger that wobbled a little but moved nothing was meant as a tap.
       if (Math.abs(d.offset) < this.cell * 0.5 &&
           Math.hypot(d.lastFinger.x - this.touchStart.x, d.lastFinger.y - this.touchStart.y) < this.cell * 0.6) {
-        this.busyUntil = 0;
         this.handleTap(d.origin);
       }
       return;
@@ -721,10 +742,9 @@ export class Game {
     for (const bp of side.block) {
       const np = moved(bp, side.dir, k);
       const n = this.node(np);
-      if (n) this.anim.to(n, this.point(np), 0.07, { key: 'move' });
+      if (n) this.anim.to(n, this.point(np), 0.06, { key: 'move' });
     }
-    this.busyUntil = now() + 0.1;
-    this.after(0.08, () => this.match(newPos, partner));
+    this.match(newPos, partner);
   }
 
   springBack(d) {
@@ -732,11 +752,10 @@ export class Game {
     for (const bp of d.plus.block.concat(d.minus.block)) {
       const n = this.node(bp);
       if (!n) continue;
-      this.anim.to(n, this.point(bp), 0.2, { ease: 'out', key: 'move' });
+      this.anim.to(n, this.point(bp), 0.15, { ease: 'out', key: 'move' });
       n.z = 0;
     }
     this.wobble(this.node(d.origin));
-    this.busyUntil = now() + 0.2;
   }
 
   // ------------------------------------------------------------ matching
@@ -775,34 +794,30 @@ export class Game {
     this.flash(pb.x, pb.y);
     this.advanceGirl();
 
-    // the two tiles slide together along the line between them, then pop
-    const total = Math.hypot(pb.x - pa.x, pb.y - pa.y);
-    const ux = total ? (pb.x - pa.x) / total : 0, uy = total ? (pb.y - pa.y) / total : 0;
-    const meet = total / 2;
-    const duration = Math.min(0.32, Math.max(0.08, (total - this.cell) / (this.cell * 20)));
-    const da = Math.max(0, meet - this.cell / 2), db = Math.min(total, meet + this.cell / 2);
+    // Like the original, a matched pair vanishes at once: a quick pop where each tile stands.
     for (const n of [na, nb]) {
-      this.anim.cancel(n);
+      this.anim.cancel(n, 'spin');
+      this.anim.cancel(n, 'alpha');
       n.z = 20;
       n.rot = 0;
       n.scale = 1;
       n.shake = false;
       n.pulse = false;
+      n.tapT0 = -1;
       n.wobbleT0 = -1;
       n.lit = true;
+      this.anim.to(n, { scale: 1.12 }, 0.04, {
+        key: 'pop',
+        done: () => this.anim.to(n, { scale: 0.3, alpha: 0 }, 0.1, { key: 'pop', done: () => { n.gone = true; } }),
+      });
     }
-    this.anim.to(na, { x: pa.x + ux * da, y: pa.y + uy * da }, duration, { key: 'move' });
-    this.anim.to(nb, { x: pa.x + ux * db, y: pa.y + uy * db }, duration, { key: 'move' });
-    const bx = pa.x + ux * meet, by = pa.y + uy * meet;
-    this.after(duration, () => {
-      for (const n of [na, nb]) {
-        this.anim.to(n, { scale: 1.15, rot: rand(-0.3, 0.3) }, 0.06, {
-          done: () => this.anim.to(n, { scale: 0.2, alpha: 0 }, 0.14, { done: () => { n.gone = true; } }),
-        });
-      }
-      this.burst(bx, by);
-    });
-    this.after(duration + 0.3, () => this.checkBoard(), 'check');
+    if (Math.hypot(pb.x - pa.x, pb.y - pa.y) > this.cell * 1.5) {
+      this.burst(pa.x, pa.y, 10);
+      this.burst(pb.x, pb.y, 10);
+    } else {
+      this.burst((pa.x + pb.x) / 2, (pa.y + pb.y) / 2);
+    }
+    this.after(0.2, () => this.checkBoard(), 'check');
   }
 
   checkBoard() {
@@ -846,9 +861,9 @@ export class Game {
     }, 0.52);
   }
 
-  burst(x, y) {
+  burst(x, y, leaves = 18) {
     const cell = this.cell;
-    for (let i = 0; i < 18; i++) {
+    for (let i = 0; i < leaves; i++) {
       const x0 = x + rand(-0.6, 0.6) * cell, y0 = y + rand(-0.35, 0.35) * cell;
       const ox = rand(-1.5, 1.5) * cell, oy = -rand(-0.2, 1.1) * cell;
       const fx = rand(-0.3, 0.3) * cell, fy = rand(0.8, 1.6) * cell;
@@ -1141,7 +1156,11 @@ export class Game {
 
   drawTile(n, t) {
     let rot = n.rot, scale = n.scale;
-    if (n.shake) rot += segments(SHAKE, (t - n.shakeT0) % SHAKE_LEN) ?? 0;
+    if (n.shake) rot += shakeAngle(t - n.shakeT0);
+    if (n.tapT0 >= 0) {
+      const v = segments(TAP_POP, t - n.tapT0, 1);
+      if (v === null) n.tapT0 = -1; else scale *= v;
+    }
     if (n.pulse) scale *= 1 + 0.05 * (1 - Math.cos((TAU * (t - n.pulseT0)) / 0.6));
     if (n.wobbleT0 >= 0) {
       const w = segments(WOBBLE, t - n.wobbleT0);
