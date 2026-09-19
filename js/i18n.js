@@ -51,6 +51,13 @@ export const L = {
   tryAgain: () => t('Try Again', '再玩一次'),
   playAgain: () => t('Play Again', '再来一局'),
 
+  checkUpdates: () => t('Check for updates', '检查更新'),
+  checking: () => t('Checking…', '正在检查…'),
+  updating: v => t(`Updating to v${v}…`, `正在更新到 v${v}…`),
+  upToDate: v => t(`Up to date (v${v}) ✓`, `已是最新版 (v${v}) ✓`),
+  updateFailed: () => t('Couldn\u2019t update — check the connection and try again', '更新失败，请检查网络后重试'),
+  version: v => t(`Version ${v}`, `版本 ${v}`),
+
   photoBreak: () => t('Photo Break 💕', '回忆时间 💕'),
   rewardIn: s => t(`Reward in ${s}s`, `${s} 秒后获得奖励`),
   collect: kind => (kind === 'hint' ? t('Collect +3 Hints', '领取 +3 提示') : t('Collect Shuffle', '领取洗牌')),

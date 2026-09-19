@@ -4,9 +4,7 @@
 import { L, isChinese, setChinese } from './i18n.js';
 import { sound } from './sound.js';
 import { photos } from './photos.js';
-
-/** Shown at the bottom of Settings, so it's easy to tell which version a phone is running. */
-export const VERSION = 7;
+import { VERSION } from './version.js';
 
 const h = (tag, cls, text) => {
   const el = document.createElement(tag);
@@ -48,6 +46,37 @@ function segmented(label, options, value, onChange) {
   }
   row.append(seg);
   return row;
+}
+
+/** Makes sure the newest files are stored on the phone (installing a new build if there is one). */
+async function forceUpdate() {
+  if (!('serviceWorker' in navigator)) return;
+  const reg = await navigator.serviceWorker.getRegistration();
+  if (!reg) return;
+  await reg.update();
+  const incoming = reg.installing || reg.waiting;
+  if (incoming) {
+    // a new build is installing: wait until it has taken over
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('timeout')), 30000);
+      const done = () => { clearTimeout(timer); resolve(); };
+      if (incoming.state === 'activated') return done();
+      incoming.addEventListener('statechange', () => {
+        if (incoming.state === 'activated') done();
+        if (incoming.state === 'redundant') { clearTimeout(timer); reject(new Error('install failed')); }
+      });
+    });
+    return;
+  }
+  // same build: re-download its files anyway, in case anything was cached stale
+  const worker = reg.active;
+  if (!worker) return;
+  await new Promise((resolve, reject) => {
+    const ch = new MessageChannel();
+    const timer = setTimeout(() => reject(new Error('timeout')), 30000);
+    ch.port1.onmessage = e => { clearTimeout(timer); e.data === 'ok' ? resolve() : reject(new Error(e.data)); };
+    worker.postMessage('refresh', [ch.port2]);
+  });
 }
 
 export class UI {
@@ -115,9 +144,36 @@ export class UI {
       this.game.restartLevel();
     }, 'orange'));
     panel.append(button(L.resume(), () => this.hide('settings')));
-    panel.append(h('p', 'version', `v${VERSION}`));
+    panel.append(this.updateButton());
+    panel.append(h('p', 'version', L.version(VERSION)));
     layer.append(scrim, panel);
     this.show('settings');
+  }
+
+  /** "Check for updates": asks the server for the newest version, downloads it fresh and restarts. */
+  updateButton() {
+    const b = h('button', 'update-btn', L.checkUpdates());
+    b.addEventListener('click', async () => {
+      if (b.disabled) return;
+      b.disabled = true;
+      sound.play('tap');
+      b.textContent = L.checking();
+      try {
+        const res = await fetch(`version.json?t=${Date.now()}`, { cache: 'no-store' });
+        const latest = (await res.json()).version;
+        if (latest > VERSION) b.textContent = L.updating(latest);
+        await forceUpdate();
+        if (latest > VERSION) {
+          location.reload();
+          return;
+        }
+        b.textContent = L.upToDate(VERSION);
+      } catch {
+        b.textContent = L.updateFailed();
+      }
+      b.disabled = false;
+    });
+    return b;
   }
 
   // ---------------------------------------------------------------- results

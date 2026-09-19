@@ -2,20 +2,39 @@
 // background (the newest version is used from the next launch). Encrypted photos never change
 // once written, so they're cached as-is.
 
-const CACHE = 'tile-match-v7';
+const CACHE = 'tile-match-v8';
+const BUILD = 8;
 const PHOTOS = 'tile-match-photos'; // kept across app updates so photos never download twice
 const APP = [
   './', 'index.html', 'style.css', 'manifest.webmanifest',
   'js/main.js', 'js/game.js', 'js/board.js', 'js/art.js', 'js/ui.js',
-  'js/sound.js', 'js/i18n.js', 'js/store.js', 'js/photos.js',
+  'js/sound.js', 'js/i18n.js', 'js/store.js', 'js/photos.js', 'js/version.js',
   'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
 ];
 
+/** Downloads every app file fresh: a unique query string gets past the CDN, 'reload' past the
+ *  phone's own HTTP cache. Files are stored under their plain names. */
+async function fetchApp(cacheName, tag) {
+  const cache = await caches.open(cacheName);
+  await Promise.all(APP.map(async u => {
+    const res = await fetch(new Request(`${u}${u.includes('?') ? '&' : '?'}b=${tag}`, { cache: 'reload' }));
+    if (!res.ok) throw new Error(`${u}: ${res.status}`);
+    await cache.put(u, res);
+  }));
+}
+
 self.addEventListener('install', e => {
-  // 'reload' skips the browser's HTTP cache, so a new version never installs stale files
-  e.waitUntil(caches.open(CACHE)
-    .then(c => c.addAll(APP.map(u => new Request(u, { cache: 'reload' }))))
-    .then(() => self.skipWaiting()));
+  e.waitUntil(fetchApp(CACHE, BUILD).then(() => self.skipWaiting()));
+});
+
+// "Check for updates" in Settings: re-download everything now, even if this build is current.
+self.addEventListener('message', e => {
+  if (e.data !== 'refresh') return;
+  const port = e.ports[0];
+  e.waitUntil(fetchApp(CACHE, Date.now()).then(
+    () => port && port.postMessage('ok'),
+    err => port && port.postMessage('error: ' + err.message),
+  ));
 });
 
 self.addEventListener('activate', e => {
@@ -30,6 +49,9 @@ self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
   const url = new URL(req.url);
+
+  // the version check must always ask the server
+  if (url.pathname.endsWith('/version.json')) return;
 
   // the photo list should be fresh so newly added photos show up, but never wait long for it
   if (url.pathname.endsWith('/photos/index.json')) {

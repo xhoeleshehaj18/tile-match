@@ -7,6 +7,7 @@ import { DPR } from './art.js';
 import { sound } from './sound.js';
 import { L } from './i18n.js';
 import { store, Stats, savedMode } from './store.js';
+import { VERSION } from './version.js';
 
 export const COLS = 10;
 export const ROWS = 14;
@@ -284,6 +285,8 @@ export class Game {
     const buttonY = H - (safe.bottom * 0.5 + (bottomH - safe.bottom * 0.5) / 2);
     this.hintBtn = { x: W * 0.338, y: buttonY, w: bW, h: bH, sprite: Art.powerButton(bW, bH, 'hint', s), alpha: 1, pressT0: -1, popT0: -1, attention: false, attT0: 0 };
     this.shuffleBtn = { x: W * 0.66, y: buttonY, w: bW, h: bH, sprite: Art.powerButton(bW, bH, 'shuffle', s), alpha: 1, pressT0: -1, popT0: -1, attention: false, attT0: 0 };
+    this.versionSprite = Art.pill(`v${VERSION}`, 20 * s, { color: 'rgba(255,255,255,0.8)', bg: 'rgba(0,0,0,0.18)', fontScale: 0.62, radius: 0.5, pad: 0.8 });
+    this.versionPos = { x: 10 * s + this.versionSprite.w / 2, y: H - Math.max(safe.bottom * 0.6, 8 * s) - this.versionSprite.h / 2 };
     this.badgeSprites = new Map();
     this.toastSprites = new Map();
     this.scorePopT0 = -1;
@@ -1369,6 +1372,7 @@ export class Game {
       this.drawAt(b, this.W - 24 * s - b.w / 2, this.topY + 24 * s + b.h / 2, 0, 1, 1);
     }
 
+    this.drawAt(this.versionSprite, this.versionPos.x, this.versionPos.y, 0, 1, 1);
     this.drawButton(this.hintBtn, t);
     this.drawButton(this.shuffleBtn, t);
 
