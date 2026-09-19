@@ -106,16 +106,23 @@ export function tile(w, h, style) {
   return c;
 }
 
+/** One emoji centred in a square sprite. Centred by the ink it actually draws (bounding box),
+ *  not by its advance width, which Safari gets wrong for some emoji. */
 export function emoji(ch, size) {
   const box = size * 1.2;
   const [c, ctx] = surface(box, box);
   ctx.font = `${size}px ${EMOJI_FONT}`;
-  ctx.textAlign = 'center';
+  ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
   const m = ctx.measureText(ch);
+  const left = m.actualBoundingBoxLeft, right = m.actualBoundingBoxRight;
+  const inkW = left + right;
+  const x = Number.isFinite(inkW) && inkW > size * 0.4 && inkW < size * 1.6
+    ? box / 2 - (right - left) / 2
+    : (box - m.width) / 2;
   const asc = m.actualBoundingBoxAscent || size * 0.8;
   const desc = m.actualBoundingBoxDescent || size * 0.2;
-  ctx.fillText(ch, box / 2, box / 2 + (asc - desc) / 2);
+  ctx.fillText(ch, x, box / 2 + (asc - desc) / 2);
   return c;
 }
 

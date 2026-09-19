@@ -10,9 +10,10 @@ import { store, Stats, savedMode } from './store.js';
 
 export const COLS = 10;
 export const ROWS = 14;
+// Plain emoji only: no U+FE0F "emoji style" marker, which Safari mis-measures (the ⭐️ tile drew off-centre).
 export const KINDS = ['🍩', '🍄', '🍱', '🍞', '🦪', '🐮', '🍦', '🔥', '🦉', '🦄', '🐰', '🥚',
   '🍉', '🍅', '🍚', '🐼', '🧁', '🍰', '🐱', '🐶', '🦊', '🐸', '🐧', '🐥',
-  '🍓', '🍒', '🍑', '🍋', '🥑', '🌽', '🥕', '🍪', '🍭', '🌸', '🌻', '⭐️',
+  '🍓', '🍒', '🍑', '🍋', '🥑', '🌽', '🥕', '🍪', '🍭', '🌸', '🌻', '⭐',
   '🎀', '💎', '🧸', '🎈', '🍔', '🍟', '🍕', '🐙', '🦋', '🐝', '🐢', '🐳'];
 
 // Challenge: tuned by simulation so a careless player wins about 1 in 4 games and a careful one
@@ -211,7 +212,8 @@ export class Game {
     const s = (this.s = W / 592);
     const margin = 8 * s, padX = 10 * s, padY = 13 * s;
     const bottomH = H * 0.12 + safe.bottom * 0.5;
-    const topMin = safe.top + 150 * s;
+    // the scenery strip (girl, road, house, HUD) never gets squeezed; on short screens the tiles shrink instead
+    const topMin = safe.top + 205 * s;
     let cell = (W - 2 * margin - 2 * padX) / COLS;
     if (bottomH + ROWS * cell + 2 * padY + topMin > H) cell = (H - bottomH - topMin - 2 * padY) / ROWS;
     this.cell = cell;
@@ -1317,6 +1319,15 @@ export class Game {
     this.levelTileTotal = COLS * ROWS;
     this.rebuildTiles(false);
     this.checkBoard();
+  }
+
+  /** Every tile icon on the board at once, to check they all render centred. */
+  debugAllKinds() {
+    const b = new Board(COLS, ROWS);
+    KINDS.forEach((_, k) => b.set({ c: k % COLS, r: Math.floor(k / COLS) }, { id: k, kind: k }));
+    this.board = b;
+    this.levelTileTotal = COLS * ROWS;
+    this.rebuildTiles(false);
   }
 
   debugEndgame() {

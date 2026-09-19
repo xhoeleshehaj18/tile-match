@@ -2,7 +2,7 @@
 // background (the newest version is used from the next launch). Encrypted photos never change
 // once written, so they're cached as-is.
 
-const CACHE = 'tile-match-v2';
+const CACHE = 'tile-match-v3';
 const PHOTOS = 'tile-match-photos'; // kept across app updates so photos never download twice
 const APP = [
   './', 'index.html', 'style.css', 'manifest.webmanifest',
@@ -12,7 +12,10 @@ const APP = [
 ];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(APP)).then(() => self.skipWaiting()));
+  // 'reload' skips the browser's HTTP cache, so a new version never installs stale files
+  e.waitUntil(caches.open(CACHE)
+    .then(c => c.addAll(APP.map(u => new Request(u, { cache: 'reload' }))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', e => {

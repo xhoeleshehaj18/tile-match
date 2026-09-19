@@ -59,7 +59,13 @@ window.addEventListener('orientationchange', scheduleFit);
 fit();
 
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
+  // A new version just took over right after opening: reload once so it's used straight away
+  // (progress is saved after every move, so nothing is lost).
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (hadController && performance.now() < 15000) location.reload();
+  });
 }
 
 // Debug helpers for testing: ?autoplay (&slides), ?stuck, ?endgame, ?nopowerups
@@ -67,6 +73,7 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') {
 const local = location.hostname === 'localhost';
 const params = local ? new URLSearchParams(location.search) : new URLSearchParams();
 if (params.has('fps')) game.perf = { frames: 0, slow: 0, ours: 0, lastWork: 0, maxWork: 0, sumWork: 0, budget: 1 / 60 };
+if (params.has('kinds')) setTimeout(() => game.debugAllKinds(), 1500);
 if (params.has('stuck')) setTimeout(() => game.debugStuck(), 1500);
 if (params.has('endgame')) setTimeout(() => game.debugEndgame(), 1500);
 if (params.has('nopowerups')) setTimeout(() => { game.hints = 0; game.shuffles = 0; game.updateBadges(); }, 1200);
