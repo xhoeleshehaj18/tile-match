@@ -106,6 +106,15 @@ export function tile(w, h, style) {
   return c;
 }
 
+/** White tile silhouette, flashed over a tile the instant it's matched. */
+export function tileFlash(w, h) {
+  const [c, ctx] = surface(w, h);
+  rr(ctx, 0.5, 0.5, w - 1, h - 1, w * 0.13);
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fill();
+  return c;
+}
+
 /** One emoji centred in a square sprite. Centred by the ink it actually draws (bounding box),
  *  not by its advance width, which Safari gets wrong for some emoji. */
 export function emoji(ch, size) {

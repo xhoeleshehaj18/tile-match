@@ -101,5 +101,5 @@ if (params.has('autoplay')) {
     }
   }, params.has('fast') ? 350 : 900);
 }
-if (local) window.__game = game;
+if (local) { window.__game = game; window.__sound = sound; }
 

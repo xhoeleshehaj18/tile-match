@@ -112,6 +112,10 @@ export class Game {
     this.timers = [];
     this.particles = [];
     this.particleOut = { x: 0, y: 0, rot: 0, scale: 1, alpha: 1 };
+    this.frags = [];
+    this.jx = 0;
+    this.jy = 0;
+    this.joltT0 = -1;
     this.raised = [];
     this.tiles = [];          // everything drawn, including tiles still animating away
     this.nodes = new Map();   // live tiles by id
@@ -258,6 +262,9 @@ export class Game {
     this.tileH = cell * 0.99;
     this.tileSprite = Art.tile(this.tileW, this.tileH, 'normal');
     this.tileLitSprite = Art.tile(this.tileW, this.tileH, 'lit');
+    this.tileFlashSprite = Art.tileFlash(this.tileW, this.tileH);
+    this.fragSprites = new Map();
+    this.frags = [];
     this.emojiSize = cell * 0.7;
     this.emojiSprites = KINDS.map(k => Art.emoji(k, this.emojiSize));
     this.leafSprite = Art.leaf(cell * 0.42);
@@ -317,7 +324,7 @@ export class Game {
     if (typeof createImageBitmap !== 'function') return;
     const gen = (this.spriteGen = (this.spriteGen ?? 0) + 1);
     const lift = c => createImageBitmap(c).then(b => { b.w = c.w; b.h = c.h; return b; });
-    const fields = ['bg', 'tileSprite', 'tileLitSprite', 'dashes', 'girlSprite', 'leafSprite', 'sparkleSprite', 'glowSprite', 'ringSprite'];
+    const fields = ['bg', 'tileSprite', 'tileLitSprite', 'tileFlashSprite', 'dashes', 'girlSprite', 'leafSprite', 'sparkleSprite', 'glowSprite', 'ringSprite'];
     Promise.all([...fields.map(f => lift(this[f])), ...this.emojiSprites.map(lift)])
       .then(list => {
         if (gen !== this.spriteGen) return; // a newer layout replaced these
@@ -457,7 +464,7 @@ export class Game {
   makeTile(t, p) {
     const pt = this.point(p);
     return { id: t.id, kind: t.kind, x: pt.x, y: pt.y, rot: 0, scale: 1, alpha: 1, z: 0, lit: false,
-      shake: false, shakeT0: 0, tapT0: -1, pulse: false, pulseT0: 0, wobbleT0: -1, gone: false };
+      shake: false, shakeT0: 0, tapT0: -1, flashT0: -1, pulse: false, pulseT0: 0, wobbleT0: -1, gone: false };
   }
 
   rebuildTiles(animated) {
@@ -465,6 +472,7 @@ export class Game {
     this.tiles = [];
     this.nodes.clear();
     this.particles = [];
+    this.frags = [];
     for (const p of this.board.occupied()) {
       const n = this.makeTile(this.board.get(p), p);
       this.tiles.push(n);
@@ -505,7 +513,10 @@ export class Game {
       return { x: e.clientX - r.left, y: e.clientY - r.top };
     };
     c.addEventListener('pointerdown', e => {
-      if (this.pointerId !== null) return; // only the first finger counts
+      // Only the first finger counts. A new primary pointer means every earlier touch has ended,
+      // so a lost pointerup (iOS can drop one during system gestures) can never freeze input.
+      if (this.pointerId !== null && !e.isPrimary) return;
+      if (this.pointerId !== null) this.touchUp();
       this.pointerId = e.pointerId;
       try { c.setPointerCapture(e.pointerId); } catch {}
       sound.unlock();
@@ -528,6 +539,7 @@ export class Game {
     };
     c.addEventListener('pointerup', end);
     c.addEventListener('pointercancel', end);
+    c.addEventListener('lostpointercapture', e => { if (e.pointerId === this.pointerId) end(e); });
   }
 
   hit(btn, pt, w = btn.w, h = btn.h) {
@@ -774,7 +786,7 @@ export class Game {
     const t = now();
     this.combo = t - this.lastMatch < 3.5 ? this.combo + 1 : 1;
     this.lastMatch = t;
-    sound.play(this.combo >= 2 ? 'combo' : 'match');
+    sound.clear(this.combo);
     sound.buzz(18);
     if (this.combo >= 2) this.showCombo(this.combo);
 
@@ -794,23 +806,23 @@ export class Game {
     this.flash(pb.x, pb.y);
     this.advanceGirl();
 
-    // Like the original, a matched pair vanishes at once: a quick pop where each tile stands.
+    // Like the original, a matched pair goes at once: a white flash, then each tile shatters.
     for (const n of [na, nb]) {
-      this.anim.cancel(n, 'spin');
-      this.anim.cancel(n, 'alpha');
+      this.anim.cancel(n);
       n.z = 20;
       n.rot = 0;
-      n.scale = 1;
       n.shake = false;
       n.pulse = false;
       n.tapT0 = -1;
       n.wobbleT0 = -1;
       n.lit = true;
-      this.anim.to(n, { scale: 1.12 }, 0.04, {
-        key: 'pop',
-        done: () => this.anim.to(n, { scale: 0.3, alpha: 0 }, 0.1, { key: 'pop', done: () => { n.gone = true; } }),
+      n.flashT0 = t;
+      this.anim.to(n, { scale: 1.16 }, 0.07, {
+        ease: 'out', key: 'pop',
+        done: () => { n.gone = true; this.shatter(n); },
       });
     }
+    this.jolt(Math.min(this.combo, 6));
     if (Math.hypot(pb.x - pa.x, pb.y - pa.y) > this.cell * 1.5) {
       this.burst(pa.x, pa.y, 10);
       this.burst(pb.x, pb.y, 10);
@@ -845,6 +857,40 @@ export class Game {
   // ------------------------------------------------------------ effects
 
   addParticle(sprite, fn, dur) { this.particles.push({ sprite, fn, t0: now(), dur }); }
+
+  /** The tile (face + icon) cut into a 3×3 grid of pieces that spin out and fall. */
+  shatter(n) {
+    let img = this.fragSprites.get(n.kind);
+    if (!img) {
+      const base = this.tileLitSprite, icon = this.emojiSprites[n.kind % this.emojiSprites.length];
+      const [c, ctx] = Art.surface(base.w, base.h);
+      ctx.drawImage(base, 0, 0, base.w, base.h);
+      ctx.drawImage(icon, (base.w - icon.w) / 2, (base.h - icon.w) / 2 - base.h * 0.05, icon.w, icon.w);
+      this.fragSprites.set(n.kind, (img = c));
+    }
+    const cell = this.cell, t0 = now();
+    const pw = img.w / 3, ph = img.h / 3;
+    for (let i = 0; i < 3; i++) {
+      for (let j = 0; j < 3; j++) {
+        const dx = (i - 1) * pw, dy = (j - 1) * ph;
+        const ang = Math.atan2(dy + rand(-2, 2), dx + rand(-2, 2));
+        const speed = cell * rand(2.2, 4.5);
+        this.frags.push({
+          img, sx: i * pw, sy: j * ph, sw: pw, sh: ph,
+          x0: n.x + dx, y0: n.y + dy,
+          vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed - cell * rand(2, 3.5),
+          r0: 0, vr: rand(-9, 9), t0,
+        });
+      }
+    }
+  }
+
+  /** A tiny knock of the board on every clear; a little stronger during combos. */
+  jolt(strength) {
+    this.joltT0 = now();
+    this.joltAmp = this.s * (1.2 + 0.35 * strength);
+    this.joltAng = rand(0, TAU);
+  }
 
   flash(x, y) {
     this.addParticle(this.glowSprite, (a, o) => {
@@ -1010,7 +1056,7 @@ export class Game {
     }
     this.save();
     this.updateBadges();
-    sound.play('combo');
+    sound.play('win', { gain: 0.6 });
     (kind === 'hint' ? this.hintBtn : this.shuffleBtn).popT0 = now();
   }
 
@@ -1144,6 +1190,8 @@ export class Game {
     if (alpha <= 0.001 || scale <= 0.001) return;
     const ctx = this.ctx;
     ctx.globalAlpha = Math.min(1, alpha);
+    x += this.jx;
+    y += this.jy;
     if (rot === 0 && scale === 1) {
       ctx.drawImage(img, snap(x - img.w / 2), snap(y - img.h / 2), img.w, img.h);
     } else {
@@ -1173,16 +1221,26 @@ export class Game {
     const base = n.lit ? this.tileLitSprite : this.tileSprite;
     const icon = this.emojiSprites[n.kind % this.emojiSprites.length];
     const tw = base.w, th = base.h, iw = icon.w;
+    const nx = n.x + this.jx, ny = n.y + this.jy;
     ctx.globalAlpha = Math.min(1, alpha);
     if (rot === 0 && scale === 1) {
-      const x = snap(n.x - tw / 2), y = snap(n.y - th / 2);
+      const x = snap(nx - tw / 2), y = snap(ny - th / 2);
       ctx.drawImage(base, x, y, tw, th);
-      ctx.drawImage(icon, snap(n.x - iw / 2), snap(n.y - iw / 2 - th * 0.05), iw, iw);
+      ctx.drawImage(icon, snap(nx - iw / 2), snap(ny - iw / 2 - th * 0.05), iw, iw);
+      if (n.flashT0 >= 0) {
+        ctx.globalAlpha = 0.85;
+        ctx.drawImage(this.tileFlashSprite, x, y, tw, th);
+      }
     } else {
       const c = Math.cos(rot) * scale * DPR, s = Math.sin(rot) * scale * DPR;
-      ctx.setTransform(c, s, -s, c, n.x * DPR, n.y * DPR);
+      ctx.setTransform(c, s, -s, c, nx * DPR, ny * DPR);
       ctx.drawImage(base, -tw / 2, -th / 2, tw, th);
       ctx.drawImage(icon, -iw / 2, -iw / 2 - th * 0.05, iw, iw);
+      if (n.flashT0 >= 0) {
+        ctx.globalAlpha = 0.85;
+        const f = this.tileFlashSprite;
+        ctx.drawImage(f, -f.w / 2, -f.h / 2, f.w, f.h);
+      }
       ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     }
   }
@@ -1223,6 +1281,18 @@ export class Game {
       ctx.drawImage(g, this.girl.x - g.w / 2, this.girlBottom - g.h + bob, g.w, g.h);
     }
 
+    // board knock after a clear
+    this.jx = this.jy = 0;
+    if (this.joltT0 >= 0) {
+      const a = t - this.joltT0;
+      if (a > 0.16) this.joltT0 = -1;
+      else {
+        const k = this.joltAmp * Math.exp(-a / 0.045) * Math.sin(a * TAU * 22);
+        this.jx = Math.cos(this.joltAng) * k;
+        this.jy = Math.sin(this.joltAng) * k;
+      }
+    }
+
     // drag guides
     if (this.bands) {
       ctx.globalAlpha = 1;
@@ -1261,7 +1331,27 @@ export class Game {
       this.particles.length = alive;
     }
 
+    // tile shards
+    if (this.frags.length) {
+      const g = this.cell * 16;
+      let alive = 0;
+      for (const f of this.frags) {
+        const a = t - f.t0;
+        if (a > 0.62) continue;
+        this.frags[alive++] = f;
+        const x = f.x0 + f.vx * a + this.jx, y = f.y0 + f.vy * a + 0.5 * g * a * a + this.jy;
+        const sc = (1 - 0.35 * (a / 0.62)) * DPR, rot = f.r0 + f.vr * a;
+        const c = Math.cos(rot) * sc, sn = Math.sin(rot) * sc;
+        ctx.globalAlpha = a < 0.35 ? 1 : 1 - (a - 0.35) / 0.27;
+        ctx.setTransform(c, sn, -sn, c, x * DPR, y * DPR);
+        ctx.drawImage(f.img, f.sx * DPR, f.sy * DPR, f.sw * DPR, f.sh * DPR, -f.sw / 2, -f.sh / 2, f.sw, f.sh);
+      }
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      this.frags.length = alive;
+    }
+
     // HUD
+    this.jx = this.jy = 0;
     ctx.globalAlpha = 1;
     const gearPress = this.gear.pressT0 >= 0 ? segments(PRESS, t - this.gear.pressT0, 1) : null;
     if (gearPress === null) this.gear.pressT0 = -1;

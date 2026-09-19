@@ -6,7 +6,7 @@ import { sound } from './sound.js';
 import { photos } from './photos.js';
 
 /** Shown at the bottom of Settings, so it's easy to tell which version a phone is running. */
-export const VERSION = 6;
+export const VERSION = 7;
 
 const h = (tag, cls, text) => {
   const el = document.createElement(tag);
