@@ -56,7 +56,22 @@ export class Board {
     return out;
   }
 
-  // --- Tap matching: only identical tiles that touch each other
+  // --- Tap matching: identical tiles that see each other along a clear straight line
+  //     (same row or column, nothing in between; touching tiles are the shortest case)
+
+  /** The nearest identical tile `p` can see in a straight line, or null. */
+  tapPartner(p) { return this.straightMatch(p); }
+
+  /** True when `a` and `b` are identical and see each other along a clear row or column. */
+  sees(a, b) {
+    const ta = this.get(a), tb = this.get(b);
+    if (!ta || !tb || ta.kind !== tb.kind || (a.c === b.c && a.r === b.r)) return false;
+    if (a.c !== b.c && a.r !== b.r) return false;
+    const d = { dc: Math.sign(b.c - a.c), dr: Math.sign(b.r - a.r) };
+    for (let q = moved(a, d); !samePos(q, b); q = moved(q, d)) if (this.get(q)) return false;
+    return true;
+  }
+
 
   touching(a, b) {
     const ta = this.get(a), tb = this.get(b);
@@ -126,10 +141,8 @@ export class Board {
       if (m) return m;
     }
     for (const p of this.occupied()) {
-      for (const d of [RIGHT, DOWN]) {
-        const q = moved(p, d);
-        if (this.touching(p, q)) return { type: 'pair', a: p, b: q };
-      }
+      const q = this.tapPartner(p);
+      if (q) return { type: 'pair', a: p, b: q };
     }
     return this.findSlide();
   }

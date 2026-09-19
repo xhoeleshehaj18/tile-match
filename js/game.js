@@ -651,13 +651,13 @@ export class Game {
     if (!this.board.get(p)) return false;
     this.clearHint();
     const s = this.selected;
-    if (s && !samePos(s, p) && this.board.touching(s, p)) {
+    if (s && !samePos(s, p) && this.board.sees(s, p)) {
       this.clearSelection();
       this.match(s, p);
       return true;
     }
-    // One tap solves a pair only when the identical tile is right next to it.
-    const partner = this.board.touchingPartner(p);
+    // One tap solves a pair when an identical tile sees it along a clear row or column.
+    const partner = this.board.tapPartner(p);
     if (partner) {
       this.clearSelection();
       this.match(p, partner);
