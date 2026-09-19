@@ -58,13 +58,26 @@ window.addEventListener('resize', scheduleFit);
 window.addEventListener('orientationchange', scheduleFit);
 fit();
 
+// Updates: check for a new version whenever the game is opened or brought back to the front.
+// iOS often keeps a Home Screen app suspended instead of restarting it, so "close and reopen"
+// alone isn't enough. A new version is applied right after opening, or the next time the game
+// comes back to the front, never in the middle of play (progress is saved after every move).
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
-  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
-  // A new version just took over right after opening: reload once so it's used straight away
-  // (progress is saved after every move, so nothing is lost).
+  let shownAt = performance.now();
+  let updateReady = false;
   const hadController = !!navigator.serviceWorker.controller;
+  const check = () => navigator.serviceWorker.getRegistration().then(r => r && r.update()).catch(() => {});
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(check).catch(() => {});
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (hadController && performance.now() < 15000) location.reload();
+    if (!hadController) return; // first install: this page is already the newest
+    if (performance.now() - shownAt < 20000) location.reload();
+    else updateReady = true;
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    if (updateReady) { location.reload(); return; }
+    shownAt = performance.now();
+    check();
   });
 }
 

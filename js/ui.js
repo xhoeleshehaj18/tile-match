@@ -5,6 +5,9 @@ import { L, isChinese, setChinese } from './i18n.js';
 import { sound } from './sound.js';
 import { photos } from './photos.js';
 
+/** Shown at the bottom of Settings, so it's easy to tell which version a phone is running. */
+export const VERSION = 6;
+
 const h = (tag, cls, text) => {
   const el = document.createElement(tag);
   if (cls) el.className = cls;
@@ -112,6 +115,7 @@ export class UI {
       this.game.restartLevel();
     }, 'orange'));
     panel.append(button(L.resume(), () => this.hide('settings')));
+    panel.append(h('p', 'version', `v${VERSION}`));
     layer.append(scrim, panel);
     this.show('settings');
   }
