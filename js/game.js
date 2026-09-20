@@ -8,6 +8,8 @@ import { sound } from './sound.js';
 import { L } from './i18n.js';
 import { store, Stats, savedMode } from './store.js';
 import { VERSION } from './version.js';
+import { photos } from './photos.js';
+import * as report from './report.js';
 
 export const COLS = 10;
 export const ROWS = 14;
@@ -30,6 +32,7 @@ const TAU = Math.PI * 2;
 const rand = (a, b) => a + Math.random() * (b - a);
 const now = () => performance.now() / 1000;
 const snap = v => Math.round(v * DPR) / DPR;
+const dirName = d => (d.dc ? (d.dc > 0 ? 'right' : 'left') : d.dr > 0 ? 'down' : 'up');
 
 const EASE = {
   linear: t => t,
@@ -153,6 +156,7 @@ export class Game {
       try {
         this.frame();
       } catch (e) {
+        report.crash(e);
         console.error(e);
       }
     };
@@ -556,6 +560,7 @@ export class Game {
     if (this.hit(this.gear, pt, gearSize + 16 * this.s, gearSize + 16 * this.s)) {
       this.gear.pressT0 = now();
       sound.play('tap');
+      report.note('settings');
       this.ui.openSettings();
       return;
     }
@@ -681,6 +686,7 @@ export class Game {
     // Every tap (including on an already-selected tile) restarts the shake right away,
     // so tapping repeatedly keeps showing where the matching tiles are.
     this.select(p);
+    report.note('tap', `${p.c},${p.r} k${this.board.get(p).kind} lit${this.peerIds.length}`);
     const n = this.node(p);
     if (n) n.tapT0 = now();
     sound.play('tap');
@@ -750,10 +756,12 @@ export class Game {
     const partner = next.straightMatch(newPos);
     if (!partner) {
       this.springBack(d);
+      report.note('fail', `${d.origin.c},${d.origin.r} ${dirName(side.dir)} x${k}`);
       sound.play('fail');
       return;
     }
     this.board = next;
+    report.note('slide', `${d.origin.c},${d.origin.r} ${dirName(side.dir)} x${k}`);
     for (const bp of side.block) {
       const np = moved(bp, side.dir, k);
       const n = this.node(np);
@@ -789,6 +797,7 @@ export class Game {
     const t = now();
     this.combo = t - this.lastMatch < 3.5 ? this.combo + 1 : 1;
     this.lastMatch = t;
+    report.note('clear', `${a.c},${a.r}+${b.c},${b.r} k${ta.kind} combo${this.combo} left${this.board.tileCount}`);
     sound.clear(this.combo);
     sound.buzz(18);
     if (this.combo >= 2) this.showCombo(this.combo);
@@ -985,6 +994,7 @@ export class Game {
     const move = this.board.findMove();
     if (!move) { this.checkBoard(); return; }
     this.hints--;
+    report.note('hint', `${this.hints} left`);
     this.save();
     this.updateBadges();
     sound.play('tap');
@@ -1064,6 +1074,7 @@ export class Game {
   }
 
   performShuffle() {
+    report.note('shuffle', `${this.shuffles} left, ${this.board.tileCount} tiles`);
     this.shuffleBtn.attention = false;
     this.clearHint();
     this.clearSelection();
@@ -1113,6 +1124,7 @@ export class Game {
       this.after(1.7, () => this.ui.showResult(result), 'win');
       return;
     }
+    report.note('WON', `${this.mode} level ${this.level}`);
     // clearing the board pays a bonus, more if the shuffle was never needed
     this.score += 500 + 300 * this.shuffles + (this.secondChanceUsed ? 0 : 200);
     const newBest = Stats.submit(this.score);
@@ -1124,6 +1136,7 @@ export class Game {
   }
 
   lose() {
+    report.note('LOST', `${this.board.tileCount} tiles left, score ${this.score}`);
     this.finishing = true;
     this.lostPending = true;
     sound.play('lose');
@@ -1142,10 +1155,31 @@ export class Game {
 
   // ------------------------------------------------------------ frame
 
+  /** Everything a bug report needs: where she is in the game, and the exact board. */
+  diagnostics() {
+    const b = this.board;
+    return {
+      mode: this.mode, level: this.level, score: this.score, best: Stats.best,
+      tiles: b.tileCount, total: this.levelTileTotal, hasMove: b.hasMove,
+      hints: this.hints, shuffles: this.shuffles, secondChanceUsed: this.secondChanceUsed,
+      busy: this.busy, finishing: this.finishing, pointer: this.pointerId,
+      drag: this.drag ? (this.drag.horizontal ? 'horizontal' : 'vertical') : 'none',
+      selected: this.selected ? `${this.selected.c},${this.selected.r}` : 'none',
+      lit: this.peerIds.length, tweens: this.anim.list.filter(tw => !tw.dead).length,
+      timers: this.timers.length, drawn: this.tiles.length,
+      overlay: this.ui.breakKind ? 'photo break' : this.ui.result ? 'result' : this.ui.anyOpen ? 'panel' : 'none',
+      sound: sound.enabled, haptics: sound.haptics, audio: sound.ctx ? sound.ctx.state : 'not started',
+      photos: photos.entries.length ? `${photos.entries.length}${photos.key ? '' : ', NO KEY'}` : 'none',
+      cols: b.cols, rows: b.rows, board: b.snapshot(),
+    };
+  }
+
   frame() {
     const t = now();
-    const dt = Math.min(0.05, Math.max(0, t - this.last));
+    const raw = t - this.last;
+    const dt = Math.min(0.05, Math.max(0, raw));
     this.last = t;
+    report.tick(t, raw);
     if (!this.built) return;
 
     if (this.timers.length) {

@@ -7,6 +7,7 @@ if (window.top !== window.self) {
 import { Game } from './game.js';
 import { UI } from './ui.js';
 import { sound } from './sound.js';
+import * as report from './report.js';
 
 const stage = document.getElementById('stage');
 const canvas = document.getElementById('game');
@@ -25,6 +26,13 @@ for (const type of ['gesturestart', 'gesturechange', 'dblclick']) {
 }
 document.addEventListener('touchmove', e => { if (e.target === canvas) e.preventDefault(); }, { passive: false });
 document.addEventListener('pointerdown', () => sound.unlock(), { once: true });
+
+// A report she sent with no connection waits on the phone; try again now and on every return.
+report.flush();
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') report.flush();
+});
+addEventListener('online', () => report.flush());
 
 let lastSize = '';
 function fit() {

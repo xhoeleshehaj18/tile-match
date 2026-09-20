@@ -5,6 +5,7 @@ import { L, isChinese, setChinese } from './i18n.js';
 import { sound } from './sound.js';
 import { photos } from './photos.js';
 import { VERSION } from './version.js';
+import * as report from './report.js';
 
 const h = (tag, cls, text) => {
   const el = document.createElement(tag);
@@ -87,7 +88,7 @@ export class UI {
     this.revivePending = null;
     this.breakKind = null;
     this.layers = {};
-    for (const name of ['settings', 'result', 'photo']) {
+    for (const name of ['settings', 'result', 'photo', 'report']) {
       const layer = h('div', `overlay ${name}`);
       layer.setAttribute('aria-hidden', 'true');
       root.append(layer);
@@ -107,6 +108,28 @@ export class UI {
     const el = this.layers[name];
     el.classList.remove('show');
     el.setAttribute('aria-hidden', 'true');
+    if (this.untrackKeyboard) this.untrackKeyboard();
+  }
+
+  /** With the keyboard up, iOS keeps the layout viewport full height, which would leave the
+   *  panel centred behind the keys. Follow the part of the screen that's actually visible. */
+  trackKeyboard(layer) {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const apply = () => {
+      layer.style.top = `${vv.offsetTop}px`;
+      layer.style.height = `${vv.height}px`;
+    };
+    apply();
+    vv.addEventListener('resize', apply);
+    vv.addEventListener('scroll', apply);
+    this.untrackKeyboard = () => {
+      vv.removeEventListener('resize', apply);
+      vv.removeEventListener('scroll', apply);
+      layer.style.top = '';
+      layer.style.height = '';
+      this.untrackKeyboard = null;
+    };
   }
 
   panel(title) {
@@ -145,7 +168,16 @@ export class UI {
     }, 'orange'));
     panel.append(button(L.resume(), () => this.hide('settings')));
     panel.append(this.updateButton());
+    const bug = h('button', 'update-btn', L.reportBug());
+    bug.addEventListener('click', () => {
+      sound.play('tap');
+      this.hide('settings');
+      this.openReport();
+    });
+    panel.append(bug);
     panel.append(h('p', 'version', L.version(VERSION)));
+    const waiting = report.pending();
+    if (waiting) panel.append(h('p', 'note waiting', L.reportWaiting(waiting)));
     layer.append(scrim, panel);
     this.show('settings');
   }
@@ -174,6 +206,91 @@ export class UI {
       b.disabled = false;
     });
     return b;
+  }
+
+  // ---------------------------------------------------------------- bug reports
+
+  /** Her way to tell me something's wrong. The game attaches the details; she just types a line. */
+  openReport() {
+    const layer = this.layers.report;
+    layer.replaceChildren();
+    const [scrim, panel] = this.panel(L.reportTitle());
+    const close = () => this.hide('report');
+    scrim.addEventListener('click', close);
+
+    panel.append(h('p', 'note', L.reportHint()));
+
+    const tags = new Set();
+    const chips = h('div', 'chips');
+    for (const [key, label] of [['froze', L.tagFroze()], ['slow', L.tagSlow()], ['sound', L.tagSound()],
+      ['looks', L.tagLooks()], ['idea', L.tagIdea()]]) {
+      const chip = h('button', 'chip', label);
+      chip.addEventListener('click', () => {
+        const on = !tags.has(key);
+        on ? tags.add(key) : tags.delete(key);
+        chip.classList.toggle('on', on);
+        sound.play('tap', { gain: 0.6 });
+      });
+      chips.append(chip);
+    }
+    panel.append(chips);
+
+    const box = h('textarea', 'report-text');
+    box.placeholder = L.reportPlaceholder();
+    box.maxLength = 600;
+    box.rows = 4;
+    box.autocapitalize = 'sentences';
+    panel.append(box);
+
+    const status = h('p', 'note status');
+    const send = button(L.reportSend(), async () => {
+      if (send.disabled) return;
+      if (!box.value.trim() && !tags.size) { box.focus(); return; }
+      send.disabled = true;
+      send.textContent = L.reportSending();
+      status.textContent = '';
+      const outcome = await report.send(box.value, [...tags], this.game.diagnostics());
+      if (outcome === 'sent') {
+        this.reportDone(L.reportSent());
+        return;
+      }
+      if (outcome === 'tooSoon') {
+        status.textContent = L.reportTooSoon();
+        send.disabled = false;
+        send.textContent = L.reportSend();
+        return;
+      }
+      // no connection to the relay: it's saved on the phone, and she can paste it herself
+      this.reportDone(L.reportQueued(), true);
+    });
+    panel.append(status, send);
+    const cancel = h('button', 'update-btn', L.reportCancel());
+    cancel.addEventListener('click', () => { sound.play('tap'); close(); });
+    panel.append(cancel);
+
+    layer.append(scrim, panel);
+    this.show('report');
+    this.trackKeyboard(layer);
+    // let the panel finish growing before the keyboard slides up
+    setTimeout(() => box.focus(), 350);
+  }
+
+  /** Replaces the form with a thank-you (and, when it couldn't be sent, a way to pass it on). */
+  reportDone(message, offerShare = false) {
+    const layer = this.layers.report;
+    layer.replaceChildren();
+    const [scrim, panel] = this.panel(L.reportTitle());
+    scrim.addEventListener('click', () => this.hide('report'));
+    panel.replaceChildren(h('div', 'big-emoji', offerShare ? '📋' : '💌'), h('p', 'sub', message));
+    if (offerShare && navigator.share) {
+      panel.append(button(L.reportShare(), () => {
+        navigator.share({ text: report.lastBody() }).catch(() => {});
+      }, 'pink'));
+    }
+    panel.append(button(L.resume(), () => this.hide('report')));
+    layer.append(scrim, panel);
+    this.show('report');
+    if (!offerShare) setTimeout(() => this.hide('report'), 2600);
   }
 
   // ---------------------------------------------------------------- results

@@ -303,3 +303,40 @@ html.standalone .overlay { bottom: auto; height: 100lvh; }
   justify-content: center;
 }
 .overlay.photo .countdown { font-size: 20px; padding: 12px 22px; }
+
+/* ------------------------------------------------------------ bug report */
+
+.overlay.report { align-items: center; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 7px; justify-content: center; }
+.chip {
+  padding: 7px 12px;
+  border: 2px solid rgba(30, 34, 8, 0.2);
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.6);
+  font: 700 15px var(--font);
+  color: var(--ink);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, transform 0.12s;
+}
+.chip.on { background: var(--blue); border-color: var(--ink); color: #fff; }
+.chip:active { transform: scale(0.94); }
+
+.report-text {
+  width: 100%;
+  padding: 11px 12px;
+  border: 2.5px solid rgba(30, 34, 8, 0.25);
+  border-radius: 13px;
+  background: #fff;
+  /* 17px: anything under 16px makes iOS zoom the page when the field is focused */
+  font: 600 17px/1.35 var(--font);
+  color: var(--ink);
+  resize: none;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.report-text:focus { outline: none; border-color: var(--blue); }
+
+.note.status { color: #B3462E; font-size: 14px; opacity: 0.95; }
+.note.status:empty { display: none; }
+.note.waiting { opacity: 0.75; }
