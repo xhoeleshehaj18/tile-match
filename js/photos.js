@@ -8,6 +8,32 @@ function fromB64url(s) {
   return Uint8Array.from(atob(s), ch => ch.charCodeAt(0));
 }
 
+/**
+ * The 10px square the photo break blurs up behind the picture.
+ *
+ * It is cut here, while the photo is still being prepared, rather than at the moment the break
+ * opens. decode() resolves before the pixels are actually resident, so the first canvas draw of
+ * a full-size photo is what pays to materialise them — measured at 9-17 ms, landing squarely on
+ * the frame the break appears and costing two frames every single time. createImageBitmap does
+ * the same centre crop and downsample off the main thread, so the break is handed a 10x10 image
+ * that is already there and has only the upscale left to do.
+ */
+async function blurSeed(img) {
+  const side = Math.min(img.naturalWidth, img.naturalHeight);
+  const sx = (img.naturalWidth - side) / 2, sy = (img.naturalHeight - side) / 2;
+  try {
+    const seed = await createImageBitmap(img, sx, sy, side, side,
+      { resizeWidth: 10, resizeHeight: 10, resizeQuality: 'high' });
+    // An engine that ignores the resize hands back the photo at full size, and blurring that
+    // is a sharp picture, not a blur. Only a square that really is 10px is any use here.
+    if (seed.width === 10 && seed.height === 10) return seed;
+    seed.close?.();
+    return null;
+  } catch {
+    return null; // no resize support: the break cuts the square itself, as it used to
+  }
+}
+
 class Photos {
   constructor() {
     this.entries = [];
@@ -69,6 +95,7 @@ class Photos {
     const img = new Image();
     img.src = url;
     await img.decode(); // decoded ahead of time so showing it never stutters
+    img.blurSeed = await blurSeed(img);
     return img;
   }
 

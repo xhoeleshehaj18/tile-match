@@ -396,15 +396,21 @@ export class UI {
     const img = await photos.next();
     if (this.breakKind !== kind) return;
     if (img) {
-      // shrink to 10px, then smooth back up to 80px: an even blur with no blocky edges
-      const tiny = document.createElement('canvas');
-      tiny.width = tiny.height = 10;
-      const side = Math.min(img.naturalWidth, img.naturalHeight);
-      tiny.getContext('2d').drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, 10, 10);
+      // shrink to 10px, then smooth back up to 80px: an even blur with no blocky edges.
+      // The 10px square normally comes cut and ready from photos.load(); cutting one here from
+      // the full-size photo stalls the main thread for over a frame (see blurSeed there).
+      let seed = img.blurSeed;
+      if (!seed) {
+        const tiny = document.createElement('canvas');
+        tiny.width = tiny.height = 10;
+        const side = Math.min(img.naturalWidth, img.naturalHeight);
+        tiny.getContext('2d').drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, 10, 10);
+        seed = tiny;
+      }
       blur.width = blur.height = 80;
       const bctx = blur.getContext('2d');
       bctx.imageSmoothingQuality = 'high';
-      bctx.drawImage(tiny, 0, 0, 80, 80);
+      bctx.drawImage(seed, 0, 0, 80, 80);
       img.className = 'photo';
       frame.append(img);
       this.breakImage = img;
@@ -438,7 +444,11 @@ export class UI {
       if (this.breakKind) return;
       layer.classList.remove('loaded');
       layer.replaceChildren();
-      if (this.breakImage) { URL.revokeObjectURL(this.breakImage.src); this.breakImage = null; }
+      if (this.breakImage) {
+        URL.revokeObjectURL(this.breakImage.src);
+        this.breakImage.blurSeed?.close?.();
+        this.breakImage = null;
+      }
     }, 300);
     const pending = this.revivePending;
     this.revivePending = null;

@@ -523,6 +523,7 @@ export class Game {
       }
     }
     if (animated) this.busyUntil = now() + 0.5;
+    this.warmFragPieces();
   }
 
   placeGirl() {
@@ -1002,32 +1003,61 @@ export class Game {
   addParticle(sprite, fn, dur) { this.particles.push({ sprite, fn, t0: now(), dur }); }
 
   /**
-   * The tile (face + icon) cut into a 3×3 grid of pieces that spin out and fall.
+   * The tile (face + icon) cut into the 3×3 grid of pieces a shatter flings out.
    *
    * The nine pieces are cut once per kind and cached as nine separate sprites rather than kept as
    * one image the draw reads sub-rectangles out of. Same pixels either way, but a plain blit of a
    * whole small canvas takes the browser's fast path, where a source-rectangle blit does not.
    */
-  shatter(n) {
-    let pieces = this.fragSprites.get(n.kind);
-    if (!pieces) {
-      const base = this.tileLitSprite, icon = this.emojiSprites[n.kind % this.emojiSprites.length];
-      const [whole, wctx] = Art.surface(base.w, base.h);
-      wctx.drawImage(base, 0, 0, base.w, base.h);
-      wctx.drawImage(icon, (base.w - icon.w) / 2, (base.h - icon.w) / 2 - base.h * 0.05, icon.w, icon.w);
-      const pw = base.w / 3, ph = base.h / 3;
-      pieces = [];
-      for (let i = 0; i < 3; i++) {
-        for (let j = 0; j < 3; j++) {
-          const [p, pctx] = Art.surface(pw, ph);
-          pctx.drawImage(whole, -i * pw, -j * ph, base.w, base.h);
-          p.dx = (i - 1) * pw;
-          p.dy = (j - 1) * ph;
-          pieces.push(p);
-        }
+  cutFragPieces(kind) {
+    const base = this.tileLitSprite, icon = this.emojiSprites[kind % this.emojiSprites.length];
+    const [whole, wctx] = Art.surface(base.w, base.h);
+    wctx.drawImage(base, 0, 0, base.w, base.h);
+    wctx.drawImage(icon, (base.w - icon.w) / 2, (base.h - icon.w) / 2 - base.h * 0.05, icon.w, icon.w);
+    const pw = base.w / 3, ph = base.h / 3;
+    const pieces = [];
+    for (let i = 0; i < 3; i++) {
+      for (let j = 0; j < 3; j++) {
+        const [p, pctx] = Art.surface(pw, ph);
+        pctx.drawImage(whole, -i * pw, -j * ph, base.w, base.h);
+        p.dx = (i - 1) * pw;
+        p.dy = (j - 1) * ph;
+        pieces.push(p);
       }
-      this.fragSprites.set(n.kind, pieces);
     }
+    this.fragSprites.set(kind, pieces);
+    return pieces;
+  }
+
+  /**
+   * Cut the shatter pieces for the kinds on the board while nothing is happening.
+   *
+   * Cutting a kind's nine pieces costs about half a millisecond here and several times that on
+   * her phone, and left to itself it happens on the frame of the first match of each kind — one
+   * of the few frames that already has the most to do. The board sits still for seconds at a
+   * time between moves, so the work is done then instead, a kind at a time, and the first match
+   * finds them ready.
+   */
+  warmFragPieces() {
+    const idle = window.requestIdleCallback;
+    if (!idle) return; // Safari < 17: the first clear of each kind cuts its own, as before
+    const map = this.fragSprites;
+    const todo = [];
+    for (const n of this.tiles) if (!map.has(n.kind) && !todo.includes(n.kind)) todo.push(n.kind);
+    if (!todo.length) return;
+    const step = deadline => {
+      // a new layout throws the whole cache away, and with it any reason to keep cutting
+      while (todo.length && this.fragSprites === map && (deadline.didTimeout || deadline.timeRemaining() > 3)) {
+        this.cutFragPieces(todo.pop());
+      }
+      if (todo.length && this.fragSprites === map) idle(step, { timeout: 1500 });
+    };
+    idle(step, { timeout: 1500 });
+  }
+
+  /** A cleared tile bursting into its nine pieces, spinning out and falling. */
+  shatter(n) {
+    const pieces = this.fragSprites.get(n.kind) || this.cutFragPieces(n.kind);
     const cell = this.cell, t0 = now();
     for (const p of pieces) {
       const ang = Math.atan2(p.dy + rand(-2, 2), p.dx + rand(-2, 2));
@@ -1418,9 +1448,26 @@ export class Game {
       return;
     }
 
+    // The tiles a drag is carrying are the only ones on the board that move during it, and they
+    // still satisfy every test for "resting" below — nothing about them is animating, they are
+    // simply somewhere new each frame. Left in the layer they invalidate it continuously, and all
+    // 140 tiles are redrawn into it on 86% of the frames of a drag to move about ten of them.
+    // Drawn on top instead, the layer holds still and is not touched for the whole drag.
+    // Like the signature itself this is read off the drag as it is now, so it cannot go stale.
+    let moving = null;
+    if (this.drag) {
+      moving = this.movingIds ??= new Set();
+      moving.clear();
+      for (const bp of this.active(this.drag).block) {
+        const n = this.node(bp);
+        if (n) moving.add(n.id);
+      }
+    }
+
     let sig = 0x811c9dc5 ^ this.tiles.length;
     for (const n of this.tiles) {
       if (n.z) { raised.push(n); continue; }
+      if (moving !== null && moving.has(n.id)) { live.push(n); continue; }
       const resting = n.alpha === 1 && n.rot === 0 && n.scale === 1 && !n.shake && !n.pulse &&
         n.tapT0 < 0 && n.wobbleT0 < 0 && n.flashT0 < 0 && t >= (n.animT ?? 0);
       if (!resting) { live.push(n); continue; }
