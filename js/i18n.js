@@ -26,6 +26,7 @@ export const L = {
 
   settings: () => t('Settings', '设置'),
   sound: () => t('Sound', '音效'),
+  volume: () => t('Volume', '音量'),
   vibration: () => t('Vibration', '振动'),
   language: () => t('Language', '语言'),
   mode: () => t('Mode', '模式'),

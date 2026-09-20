@@ -1,7 +1,7 @@
 // The game scene: layout, rendering, input, animation and rules flow (ported from GameScene.swift).
 // Everything is drawn on one canvas from pre-rendered sprites; there is no per-frame text or path drawing.
 
-import { Board, RIGHT, DOWN, LEFT, UP, moved, samePos } from './board.js';
+import { Board, DIRS, RIGHT, DOWN, LEFT, UP, moved, samePos } from './board.js';
 import * as Art from './art.js';
 import { DPR } from './art.js';
 import { sound } from './sound.js';
@@ -129,6 +129,8 @@ export class Game {
     this.hintArrow = null;
     this.drag = null;
     this.touchOrigin = null;
+    this.pendingPair = null;
+    this.beam = null;
     this.touchStart = { x: 0, y: 0 };
     this.pointerId = null;
     this.busyUntil = 0;
@@ -529,11 +531,16 @@ export class Game {
     const end = e => {
       if (e.pointerId !== this.pointerId) return;
       this.pointerId = null;
-      if (e.type === 'pointercancel') {
-        if (this.drag) this.springBack(this.drag);
+      if (e.type === 'pointercancel' && this.drag) {
+        // The system took the gesture (a swipe from the edge, a call coming in): put the row back.
+        this.showDragTarget(this.drag, null);
+        this.springBack(this.drag);
         this.touchOrigin = null;
         this.drag = null;
+        this.pendingPair = null;
+        this.beam = null;
       } else {
+        // A cancel with no slide is still a tap she made; losing it would feel like a dropped touch.
         this.touchUp();
       }
     };
@@ -563,13 +570,67 @@ export class Game {
 
     const p = this.cellAt(pt);
     if (p && this.board.get(p)) {
-      // React on touch-down (not release) so rapid taps each land instantly.
-      if (this.handleTap(p)) return; // matched: nothing left to drag
       this.touchOrigin = p;
       this.touchStart = pt;
+      this.pressTile(p);
     } else if (this.inBoard(pt)) {
       this.clearSelection();
+      this.pendingPair = null;
     }
+  }
+
+  /**
+   * A press lights up straight away and remembers the pair a release would clear — but it does not
+   * clear it yet. Clearing on touch-down used to snatch the tile out from under her finger: a tile
+   * that already saw a partner vanished the instant she touched it, so she could never drag it into
+   * line with a different one. Lighting is still instant, so rapid tapping feels exactly the same.
+   */
+  pressTile(p) {
+    this.clearHint();
+    const prev = this.selected;
+    let pair = null;
+    if (prev && !samePos(prev, p) && this.board.sees(prev, p)) pair = [prev, p];
+    else {
+      const q = this.board.tapPartner(p);
+      if (q) pair = [p, q];
+    }
+    this.pendingPair = pair;
+    if (pair) {
+      // Light only the two that would go, so the pair she is about to take is never a surprise —
+      // if it picked the wrong twin she can still drag away to a different one.
+      this.clearSelection();
+      this.selected = p;
+      this.lightPair(pair);
+    } else {
+      this.select(p);
+      sound.play('tap');
+      sound.buzz(10);
+    }
+    report.note('tap', `${p.c},${p.r} k${this.board.get(p).kind} lit${this.peerIds.length}${pair ? ' pair' : ''}`);
+    const n = this.node(p);
+    if (n) n.tapT0 = now();
+  }
+
+  lightPair(pair) {
+    const t0 = now();
+    for (const q of pair) {
+      const n = this.node(q);
+      if (!n) continue;
+      n.lit = true;
+      n.shake = true;
+      n.shakeT0 = t0;
+      this.peerIds.push(n.id);
+    }
+  }
+
+  /** Resolves a press that ended without a slide. */
+  releaseTap(p, pair) {
+    if (!pair || this.busy) return false;
+    const [a, b] = pair;
+    if (!this.board.get(a) || !this.board.get(b) || !this.board.sees(a, b)) return false;
+    this.clearSelection();
+    this.match(a, b);
+    return true;
   }
 
   inBoard(pt) {
@@ -591,9 +652,12 @@ export class Game {
       const plus = this.board.slideBlock(origin, plusDir);
       const minus = this.board.slideBlock(origin, minusDir);
       this.drag = {
-        origin, horizontal, offset: 0, lastFinger: pt,
+        origin, horizontal, offset: 0, lastFinger: pt, k: 0, preview: null, target: null,
         plus: { dir: plusDir, ...plus }, minus: { dir: minusDir, ...minus },
       };
+      // `pendingPair` is deliberately kept: a slide of a whole cell or more ignores it (she chose to
+      // move the tile instead), but a finger that wobbles and comes back to nothing still counts as
+      // the press it started as, so releasing there takes the pair rather than doing nothing.
       this.clearSelection();
       this.clearHint();
       const n = this.node(origin);
@@ -627,6 +691,11 @@ export class Game {
     this.bands.x = snapped.x;
     this.bands.y = snapped.y;
     if (steps !== prevSteps) sound.play('slide');
+    if (steps !== d.k || !d.preview || d.preview.dir !== active.dir) {
+      d.k = steps;
+      d.preview = steps > 0 ? this.previewSlide(d, active.dir, steps) : null;
+    }
+    this.showDragTarget(d, this.chooseTarget(d, pt));
 
     const n = this.node(d.origin);
     if (n && Math.hypot(n.x - this.lastSparkle.x, n.y - this.lastSparkle.y) > cell * 0.3) {
@@ -640,13 +709,18 @@ export class Game {
 
   touchUp() {
     const d = this.drag;
+    const origin = this.touchOrigin;
+    const pair = this.pendingPair;
     this.touchOrigin = null;
     this.drag = null;
-    if (d) this.finishDrag(d);
+    this.pendingPair = null;
+    if (d) this.finishDrag(d, pair);
+    else if (origin) this.releaseTap(origin, pair);
   }
 
   cancelDrag() {
     if (this.drag) {
+      this.showDragTarget(this.drag, null);
       for (const bp of this.drag.plus.block.concat(this.drag.minus.block)) {
         const n = this.node(bp);
         if (n) { const q = this.point(bp); n.x = q.x; n.y = q.y; n.z = 0; }
@@ -654,38 +728,12 @@ export class Game {
     }
     this.drag = null;
     this.touchOrigin = null;
+    this.pendingPair = null;
     this.bands = null;
+    this.beam = null;
   }
 
   // ------------------------------------------------------------ tapping
-
-  /** Returns true when the tap cleared a pair. */
-  handleTap(p) {
-    if (!this.board.get(p)) return false;
-    this.clearHint();
-    const s = this.selected;
-    if (s && !samePos(s, p) && this.board.sees(s, p)) {
-      this.clearSelection();
-      this.match(s, p);
-      return true;
-    }
-    // One tap solves a pair when an identical tile sees it along a clear row or column.
-    const partner = this.board.tapPartner(p);
-    if (partner) {
-      this.clearSelection();
-      this.match(p, partner);
-      return true;
-    }
-    // Every tap (including on an already-selected tile) restarts the shake right away,
-    // so tapping repeatedly keeps showing where the matching tiles are.
-    this.select(p);
-    report.note('tap', `${p.c},${p.r} k${this.board.get(p).kind} lit${this.peerIds.length}`);
-    const n = this.node(p);
-    if (n) n.tapT0 = now();
-    sound.play('tap');
-    sound.buzz(10);
-    return false;
-  }
 
   /** Selects `p`; it and every tile with the same icon turn yellow and keep shaking. */
   select(p) {
@@ -731,28 +779,99 @@ export class Game {
 
   // ------------------------------------------------------------ dragging
 
-  finishDrag(d) {
+  /** The board as it would be if the drag were let go now, and every pair that would be on offer. */
+  previewSlide(d, dir, k) {
+    const next = this.board.clone();
+    const pos = next.applySlide(d.origin, dir, k);
+    const cands = [];
+    for (const way of DIRS) {
+      const q = next.seenIn(pos, way);
+      if (!q) continue;
+      cands.push({
+        q, id: next.get(q).id,
+        steps: Math.abs(q.c - pos.c) + Math.abs(q.r - pos.r),
+        // sideways = in the row or column the tile has just slid into
+        across: d.horizontal ? way.dc === 0 : way.dr === 0,
+        side: d.horizontal ? way.dr : way.dc,
+      });
+    }
+    return { dir, k, next, pos, cands };
+  }
+
+  /**
+   * Which pair the drag will take. Sliding can only ever open up three: one on each side in the row
+   * or column the tile has moved into, and at most one still in line along the way it travelled.
+   * That last one comes last — a tile already in line with a partner clears on a press, so moving it
+   * means she wants a different twin. When both sideways twins are open, leaning her finger off the
+   * slide axis picks between them, which is why the beam is drawn while she is still holding on.
+   */
+  chooseTarget(d, pt) {
+    const pv = d.preview;
+    if (!pv || !pv.cands.length) return null;
+    const across = pv.cands.filter(c => c.across);
+    if (across.length > 1) {
+      const lean = d.horizontal ? pt.y - this.touchStart.y : pt.x - this.touchStart.x;
+      if (Math.abs(lean) > this.cell * 0.35) {
+        const pick = across.find(c => c.side === Math.sign(lean));
+        if (pick) return pick;
+      }
+    }
+    const pool = across.length ? across : pv.cands;
+    return pool.reduce((a, b) => (b.steps < a.steps ? b : a));
+  }
+
+  /** Lights the tile the drag would pair with and draws the beam joining the two. */
+  showDragTarget(d, c) {
+    if (d.target && d.target.id !== c?.id) {
+      const old = this.nodes.get(d.target.id);
+      if (old) { old.lit = false; old.pulse = false; }
+    }
+    if (c && d.target?.id !== c.id) {
+      const n = this.nodes.get(c.id);
+      if (n) { n.lit = true; n.pulse = true; n.pulseT0 = now(); }
+    }
+    d.target = c;
+    const dragged = this.node(d.origin);
+    if (dragged) dragged.lit = !!c;
+    if (!c) { this.beam = null; return; }
+    const a = this.point(d.preview.pos), b = this.point(c.q);
+    const w = this.cell * 0.3;
+    this.beam = {
+      x: Math.min(a.x, b.x) - (a.y === b.y ? 0 : w / 2),
+      y: Math.min(a.y, b.y) - (a.x === b.x ? 0 : w / 2),
+      w: a.y === b.y ? Math.abs(b.x - a.x) : w,
+      h: a.x === b.x ? Math.abs(b.y - a.y) : w,
+    };
+  }
+
+  finishDrag(d, pair) {
     this.bands = null;
+    this.beam = null;
     const side = this.active(d);
     const k = this.steps(d);
     if (k === 0) {
+      this.showDragTarget(d, null);
       this.springBack(d);
-      // A finger that wobbled a little but moved nothing was meant as a tap.
+      // A finger that wobbled a little but moved nothing was meant as a press.
       if (Math.abs(d.offset) < this.cell * 0.5 &&
           Math.hypot(d.lastFinger.x - this.touchStart.x, d.lastFinger.y - this.touchStart.y) < this.cell * 0.6) {
-        this.handleTap(d.origin);
+        this.releaseTap(d.origin, pair);
       }
       return;
     }
-    const next = this.board.clone();
-    const newPos = next.applySlide(d.origin, side.dir, k);
-    const partner = next.straightMatch(newPos);
-    if (!partner) {
+    const chosen = d.target;
+    const pv = d.preview;
+    if (!chosen || !pv || pv.dir !== side.dir || pv.k !== k) {
+      this.showDragTarget(d, null);
       this.springBack(d);
       report.note('fail', `${d.origin.c},${d.origin.r} ${dirName(side.dir)} x${k}`);
       sound.play('fail');
       return;
     }
+    const next = pv.next, newPos = pv.pos, partner = chosen.q;
+    const lit = this.nodes.get(chosen.id);
+    if (lit) { lit.lit = false; lit.pulse = false; }
+    d.target = null;
     this.board = next;
     report.note('slide', `${d.origin.c},${d.origin.r} ${dirName(side.dir)} x${k}`);
     for (const bp of side.block) {
@@ -765,6 +884,7 @@ export class Game {
 
   springBack(d) {
     this.bands = null;
+    this.beam = null;
     for (const bp of d.plus.block.concat(d.minus.block)) {
       const n = this.node(bp);
       if (!n) continue;
@@ -1281,6 +1401,18 @@ export class Game {
       ctx.globalAlpha = 1;
       ctx.drawImage(this.rowBand, this.gridLeft, this.bands.y - this.cell / 2, this.rowBand.w, this.rowBand.h);
       ctx.drawImage(this.colBand, this.bands.x - this.cell / 2, this.gridTop, this.colBand.w, this.colBand.h);
+    }
+
+    // The pair the drag would take, joined by a beam so the choice is never a surprise. It gets a
+    // dark edge because it has to stay readable over both the drag bands and the bare board.
+    if (this.beam) {
+      const bm = this.beam;
+      const e = Math.max(1, this.cell * 0.05);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = 'rgba(62,70,12,0.35)';
+      ctx.fillRect(bm.x - e, bm.y - e, bm.w + e * 2, bm.h + e * 2);
+      ctx.fillStyle = 'rgba(250,252,33,0.92)';
+      ctx.fillRect(bm.x, bm.y, bm.w, bm.h);
     }
 
     // tiles: resting ones first, raised ones (dragged / matching) on top

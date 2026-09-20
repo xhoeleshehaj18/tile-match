@@ -31,6 +31,31 @@ function toggle(label, on, onChange) {
   return row;
 }
 
+/** A 0–100% slider. Dragging it plays a tap at the new level so she can hear what she is choosing. */
+function slider(label, value, onChange) {
+  const row = h('label', 'row');
+  row.append(h('span', '', label));
+  const input = h('input', 'slider');
+  input.type = 'range';
+  input.min = '0';
+  input.max = '100';
+  input.step = '5';
+  input.value = String(Math.round(value * 100));
+  input.setAttribute('aria-label', label);
+  const paint = () => input.style.setProperty('--fill', `${input.value}%`);
+  paint();
+  let lastHeard = -1;
+  input.addEventListener('input', () => {
+    const v = Number(input.value) / 100;
+    paint();
+    onChange(v);
+    // one preview per step, so sliding doesn't fire a burst of overlapping taps
+    if (v > 0 && input.value !== lastHeard) { lastHeard = input.value; sound.play('tap'); }
+  });
+  row.append(input);
+  return row;
+}
+
 function segmented(label, options, value, onChange) {
   const row = h('div', 'row');
   row.append(h('span', '', label));
@@ -148,7 +173,14 @@ export class UI {
     scrim.addEventListener('click', () => this.hide('settings'));
 
     const rows = h('div', 'rows');
-    rows.append(toggle(L.sound(), sound.enabled, on => sound.setEnabled(on)));
+    const volume = slider(L.volume(), sound.volume, v => sound.setVolume(v));
+    volume.classList.toggle('dim', !sound.enabled);
+    rows.append(toggle(L.sound(), sound.enabled, on => {
+      sound.setEnabled(on);
+      volume.classList.toggle('dim', !on);
+      if (on) sound.play('tap');
+    }));
+    rows.append(volume);
     if (sound.canVibrate) rows.append(toggle(L.vibration(), sound.haptics, on => sound.setHaptics(on)));
     rows.append(segmented(L.language(), [[false, 'English'], [true, '中文']], isChinese(), zh => {
       setChinese(zh);

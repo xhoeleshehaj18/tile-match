@@ -62,6 +62,19 @@ export class Board {
   /** The nearest identical tile `p` can see in a straight line, or null. */
   tapPartner(p) { return this.straightMatch(p); }
 
+  /** The nearest identical tile `p` can see looking along `d`, with nothing in between. */
+  seenIn(p, d) {
+    const t = this.get(p);
+    if (!t) return null;
+    let q = moved(p, d);
+    while (this.inBounds(q)) {
+      const o = this.get(q);
+      if (o) return o.kind === t.kind ? q : null;
+      q = moved(q, d);
+    }
+    return null;
+  }
+
   /** True when `a` and `b` are identical and see each other along a clear row or column. */
   sees(a, b) {
     const ta = this.get(a), tb = this.get(b);
