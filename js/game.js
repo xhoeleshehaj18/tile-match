@@ -34,6 +34,10 @@ const now = () => performance.now() / 1000;
 const snap = v => Math.round(v * DPR) / DPR;
 const dirName = d => (d.dc ? (d.dc > 0 ? 'right' : 'left') : d.dr > 0 ? 'down' : 'up');
 
+// How long a shattered piece lives, and how long it stays solid before fading out.
+const FRAG_LIFE = 0.62;
+const FRAG_SOLID = 0.35;
+
 const EASE = {
   linear: t => t,
   out: t => 1 - (1 - t) * (1 - t) * (1 - t),
@@ -74,6 +78,10 @@ class Animator {
   to(target, props, dur, { ease = 'linear', delay = 0, key = null, done = null } = {}) {
     if (key) this.cancel(target, key);
     const tw = { target, props, dur: Math.max(dur, 1e-4), ease: EASE[ease], delay, key, done, from: null, t: 0, dead: false };
+    // When this tween is finished with the target. The renderer uses it to tell a tile that is
+    // being moved from one that is sitting still, so the resting-tile layer is not rebuilt for a
+    // tile whose position is about to change again next frame.
+    target.animT = Math.max(target.animT ?? 0, now() + delay + tw.dur);
     this.list.push(tw);
     return tw;
   }
@@ -116,7 +124,13 @@ export class Game {
     this.timers = [];
     this.particles = [];
     this.particleOut = { x: 0, y: 0, rot: 0, scale: 1, alpha: 1 };
+    this.frags = [];
+    this.jx = 0;
+    this.jy = 0;
+    this.joltT0 = -1;
     this.raised = [];
+    this.live = [];
+    this.still = [];
     this.tiles = [];          // everything drawn, including tiles still animating away
     this.nodes = new Map();   // live tiles by id
 
@@ -130,7 +144,6 @@ export class Game {
     this.drag = null;
     this.touchOrigin = null;
     this.pendingPair = null;
-    this.beam = null;
     this.touchStart = { x: 0, y: 0 };
     this.pointerId = null;
     this.busyUntil = 0;
@@ -270,8 +283,25 @@ export class Game {
     this.emojiSprites = KINDS.map(k => Art.emoji(k, this.emojiSize));
     this.leafSprite = Art.leaf(cell * 0.42);
     this.sparkleSprite = Art.sparkle(cell * 0.4);
-    this.glowSprite = Art.glow(cell * 1.24);
-    this.ringSprite = Art.ring(cell * 1.62);
+    this.glowSprite = Art.glow(cell * 1.2);
+    this.ringSprite = Art.ring(cell * 1.1);
+    this.fragSprites = new Map();
+    this.frags = [];
+
+    // The layer the resting tiles are kept in. It covers the board and a little beyond, because a
+    // tile's sprite is slightly taller than its cell.
+    const b = this.boardRect;
+    const pad = cell * 0.4;
+    // Snapped to whole device pixels at both corners: a layer on a half pixel would be resampled
+    // on every blit, which would cost more than it saves and soften every tile on the board.
+    const lx = Math.floor((b.x - pad) * DPR) / DPR, ly = Math.floor((b.y - pad) * DPR) / DPR;
+    this.layerRect = {
+      x: lx, y: ly,
+      w: Math.ceil((b.x + b.w + pad) * DPR) / DPR - lx,
+      h: Math.ceil((b.y + b.h + pad) * DPR) / DPR - ly,
+    };
+    [this.tileLayer, this.tileLayerCtx] = Art.surface(this.layerRect.w, this.layerRect.h);
+    this.tileSig = -1;
     this.arrowSprite = Art.arrow(cell * 0.8);
     this.rowBand = Art.band(COLS * cell, cell);
     this.colBand = Art.band(cell, ROWS * cell);
@@ -475,6 +505,7 @@ export class Game {
     this.tiles = [];
     this.nodes.clear();
     this.particles = [];
+    this.frags = [];
     for (const p of this.board.occupied()) {
       const n = this.makeTile(this.board.get(p), p);
       this.tiles.push(n);
@@ -538,7 +569,6 @@ export class Game {
         this.touchOrigin = null;
         this.drag = null;
         this.pendingPair = null;
-        this.beam = null;
       } else {
         // A cancel with no slide is still a tap she made; losing it would feel like a dropped touch.
         this.touchUp();
@@ -730,7 +760,6 @@ export class Game {
     this.touchOrigin = null;
     this.pendingPair = null;
     this.bands = null;
-    this.beam = null;
   }
 
   // ------------------------------------------------------------ tapping
@@ -799,28 +828,28 @@ export class Game {
   }
 
   /**
-   * Which pair the drag will take. Sliding can only ever open up three: one on each side in the row
-   * or column the tile has moved into, and at most one still in line along the way it travelled.
-   * That last one comes last — a tile already in line with a partner clears on a press, so moving it
-   * means she wants a different twin. When both sideways twins are open, leaning her finger off the
-   * slide axis picks between them, which is why the beam is drawn while she is still holding on.
+   * Which twin the drag takes: the one she is heading toward. A slide can never bring a new twin
+   * into line along the way the tile travels — the tiles it pushes travel with it, and the trail
+   * behind stays clear back to whatever was already in view — so anything in line along the slide
+   * was already there before she touched it, and a press would have taken it. She dragged instead,
+   * so those come last. Among the twins the slide actually opened, one on each side, the off-axis
+   * part of her gesture picks; a dead-straight drag has nothing to go on, so it takes the nearer.
    */
   chooseTarget(d, pt) {
     const pv = d.preview;
     if (!pv || !pv.cands.length) return null;
-    const across = pv.cands.filter(c => c.across);
-    if (across.length > 1) {
+    const nearest = list => list.reduce((a, b) => (b.steps < a.steps ? b : a));
+    const opened = pv.cands.filter(c => c.across);
+    const pool = opened.length ? opened : pv.cands;
+    if (pool.length > 1) {
       const lean = d.horizontal ? pt.y - this.touchStart.y : pt.x - this.touchStart.x;
-      if (Math.abs(lean) > this.cell * 0.35) {
-        const pick = across.find(c => c.side === Math.sign(lean));
-        if (pick) return pick;
-      }
+      const aimed = pool.filter(c => c.side === Math.sign(lean));
+      if (Math.abs(lean) > this.cell * 0.25 && aimed.length) return nearest(aimed);
     }
-    const pool = across.length ? across : pv.cands;
-    return pool.reduce((a, b) => (b.steps < a.steps ? b : a));
+    return nearest(pool);
   }
 
-  /** Lights the tile the drag would pair with and draws the beam joining the two. */
+  /** Lights the twin the drag would pair with, so the choice shows without drawing a path. */
   showDragTarget(d, c) {
     if (d.target && d.target.id !== c?.id) {
       const old = this.nodes.get(d.target.id);
@@ -833,20 +862,10 @@ export class Game {
     d.target = c;
     const dragged = this.node(d.origin);
     if (dragged) dragged.lit = !!c;
-    if (!c) { this.beam = null; return; }
-    const a = this.point(d.preview.pos), b = this.point(c.q);
-    const w = this.cell * 0.3;
-    this.beam = {
-      x: Math.min(a.x, b.x) - (a.y === b.y ? 0 : w / 2),
-      y: Math.min(a.y, b.y) - (a.x === b.x ? 0 : w / 2),
-      w: a.y === b.y ? Math.abs(b.x - a.x) : w,
-      h: a.x === b.x ? Math.abs(b.y - a.y) : w,
-    };
   }
 
   finishDrag(d, pair) {
     this.bands = null;
-    this.beam = null;
     const side = this.active(d);
     const k = this.steps(d);
     if (k === 0) {
@@ -884,7 +903,6 @@ export class Game {
 
   springBack(d) {
     this.bands = null;
-    this.beam = null;
     for (const bp of d.plus.block.concat(d.minus.block)) {
       const n = this.node(bp);
       if (!n) continue;
@@ -931,7 +949,7 @@ export class Game {
     this.flash(pb.x, pb.y);
     this.advanceGirl();
 
-    // Like the original, a matched pair goes at once: a brief pop, then the puff takes over.
+    // Like the original, a matched pair goes at once: a white flash, then each tile shatters.
     for (const n of [na, nb]) {
       this.anim.cancel(n);
       n.z = 20;
@@ -941,10 +959,18 @@ export class Game {
       n.tapT0 = -1;
       n.wobbleT0 = -1;
       n.lit = true;
+      n.flashT0 = t;
       this.anim.to(n, { scale: 1.16 }, 0.07, {
         ease: 'out', key: 'pop',
-        done: () => { n.gone = true; },
+        done: () => { n.gone = true; this.shatter(n); },
       });
+    }
+    this.jolt(Math.min(this.combo, 6));
+    if (Math.hypot(pb.x - pa.x, pb.y - pa.y) > this.cell * 1.5) {
+      this.burst(pa.x, pa.y, 10);
+      this.burst(pb.x, pb.y, 10);
+    } else {
+      this.burst((pa.x + pb.x) / 2, (pa.y + pb.y) / 2);
     }
     this.after(0.2, () => this.checkBoard(), 'check');
   }
@@ -976,27 +1002,68 @@ export class Game {
   addParticle(sprite, fn, dur) { this.particles.push({ sprite, fn, t0: now(), dur }); }
 
   /**
-   * A cleared tile's puff, matched to the original frame by frame (30 fps capture): a white disc
-   * grows to about 0.62 of a tile in ~100 ms and holds, then hollows into a speckled dust ring
-   * that widens a little and fades out by ~420 ms. Nothing falls and nothing leaves the tile's
-   * own footprint — that's what makes the original read as clean rather than busy.
+   * The tile (face + icon) cut into a 3×3 grid of pieces that spin out and fall.
+   *
+   * The nine pieces are cut once per kind and cached as nine separate sprites rather than kept as
+   * one image the draw reads sub-rectangles out of. Same pixels either way, but a plain blit of a
+   * whole small canvas takes the browser's fast path, where a source-rectangle blit does not.
    */
+  shatter(n) {
+    let pieces = this.fragSprites.get(n.kind);
+    if (!pieces) {
+      const base = this.tileLitSprite, icon = this.emojiSprites[n.kind % this.emojiSprites.length];
+      const [whole, wctx] = Art.surface(base.w, base.h);
+      wctx.drawImage(base, 0, 0, base.w, base.h);
+      wctx.drawImage(icon, (base.w - icon.w) / 2, (base.h - icon.w) / 2 - base.h * 0.05, icon.w, icon.w);
+      const pw = base.w / 3, ph = base.h / 3;
+      pieces = [];
+      for (let i = 0; i < 3; i++) {
+        for (let j = 0; j < 3; j++) {
+          const [p, pctx] = Art.surface(pw, ph);
+          pctx.drawImage(whole, -i * pw, -j * ph, base.w, base.h);
+          p.dx = (i - 1) * pw;
+          p.dy = (j - 1) * ph;
+          pieces.push(p);
+        }
+      }
+      this.fragSprites.set(n.kind, pieces);
+    }
+    const cell = this.cell, t0 = now();
+    for (const p of pieces) {
+      const ang = Math.atan2(p.dy + rand(-2, 2), p.dx + rand(-2, 2));
+      const speed = cell * rand(2.2, 4.5);
+      this.frags.push({
+        img: p, x0: n.x + p.dx, y0: n.y + p.dy,
+        vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed - cell * rand(2, 3.5),
+        vr: rand(-9, 9), t0,
+      });
+    }
+  }
+
+  /**
+   * A tiny knock of the board on every clear; a little stronger during combos. It is applied as one
+   * translate on the canvas for the whole board layer, not added into each tile's own position —
+   * that per-tile version was why the knock had to be dropped for performance once before.
+   */
+  jolt(strength) {
+    this.joltT0 = now();
+    this.joltAmp = this.s * (1.2 + 0.35 * strength);
+    this.joltAng = rand(0, TAU);
+  }
+
   flash(x, y) {
     this.addParticle(this.glowSprite, (a, o) => {
-      o.x = x; o.y = y; o.rot = 0;
-      o.scale = 0.3 + 0.7 * EASE.out(Math.min(1, a / 0.1));
-      o.alpha = a < 0.16 ? 1 : Math.max(0, 1 - (a - 0.16) / 0.08);
+      o.x = x; o.y = y; o.rot = 0; o.scale = 0.4 + 0.5 * Math.min(1, a / 0.25);
+      o.alpha = a < 0.1 ? 1 : Math.max(0, 1 - (a - 0.1) / 0.2);
       return true;
-    }, 0.24);
-    const spin = rand(0, TAU); // each puff lands differently, so repeats don't look stamped
+    }, 0.3);
+    const spin = 0.6;
     this.addParticle(this.ringSprite, (a, o) => {
-      if (a < 0.13) return false;
-      const k = Math.min(1, (a - 0.13) / 0.3);
-      o.x = x; o.y = y; o.rot = spin + 0.25 * k;
-      o.scale = 0.64 + 0.36 * EASE.out(k);
-      o.alpha = a < 0.2 ? (a - 0.13) / 0.07 : Math.max(0, 1 - (a - 0.2) / 0.25);
+      if (a < 0.12) return false;
+      const k = Math.min(1, (a - 0.12) / 0.4);
+      o.x = x; o.y = y; o.rot = spin * k; o.scale = 0.4 + 0.75 * k; o.alpha = 0.95 * (1 - k);
       return true;
-    }, 0.45);
+    }, 0.52);
   }
 
   burst(x, y, leaves = 18) {
@@ -1317,6 +1384,80 @@ export class Game {
     }
   }
 
+  /**
+   * Tiles, in three groups: the ones sitting still, the ones animating, and the ones lifted above
+   * the board by a drag or a clear.
+   *
+   * Almost every frame of a real game has nothing moving on the board at all, and redrawing all
+   * 140 tiles on each of those frames was 81% of the frame's work — two draws a tile, 280 of them,
+   * for a picture identical to the one before. The still ones are now kept as a single prepared
+   * image and put down in one draw.
+   *
+   * The layer is keyed off a signature of exactly what it holds: every resting tile's position,
+   * icon and lit state. Deriving the key from the contents rather than setting a flag wherever the
+   * board changes means it cannot be left stale by a call site that forgot to invalidate it — the
+   * worst a mistake here can do is rebuild the layer on a frame that did not need it.
+   */
+  drawTiles(t) {
+    const ctx = this.ctx;
+    const raised = this.raised, live = this.live, still = this.still;
+    raised.length = 0;
+    live.length = 0;
+    still.length = 0;
+
+    // A whole-board fade is on, so nothing is resting; take the simple path.
+    if (this.tileAlpha !== 1) {
+      for (const n of this.tiles) {
+        if (n.z) raised.push(n); else this.drawTile(n, t);
+      }
+      if (raised.length) {
+        raised.sort((a, b) => a.z - b.z);
+        for (const n of raised) this.drawTile(n, t);
+      }
+      this.tileSig = -1;
+      return;
+    }
+
+    let sig = 0x811c9dc5 ^ this.tiles.length;
+    for (const n of this.tiles) {
+      if (n.z) { raised.push(n); continue; }
+      const resting = n.alpha === 1 && n.rot === 0 && n.scale === 1 && !n.shake && !n.pulse &&
+        n.tapT0 < 0 && n.wobbleT0 < 0 && n.flashT0 < 0 && t >= (n.animT ?? 0);
+      if (!resting) { live.push(n); continue; }
+      still.push(n);
+      // quantised to quarter-pixels: below that the layer would redraw for a difference it
+      // could not show anyway
+      sig = Math.imul(sig ^ n.id, 16777619);
+      sig = Math.imul(sig ^ ((n.x * 4) | 0), 16777619);
+      sig = Math.imul(sig ^ ((n.y * 4) | 0), 16777619);
+      sig = Math.imul(sig ^ ((n.kind << 1) | (n.lit ? 1 : 0)), 16777619);
+    }
+    sig = Math.imul(sig ^ live.length, 16777619) >>> 0;
+
+    const r = this.layerRect;
+    if (sig !== this.tileSig) {
+      this.tileSig = sig;
+      const lctx = this.tileLayerCtx;
+      lctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      lctx.clearRect(0, 0, r.w, r.h);
+      // the layer draws in its own coordinates, so shift the board into it
+      lctx.setTransform(DPR, 0, 0, DPR, -r.x * DPR, -r.y * DPR);
+      const real = this.ctx;
+      this.ctx = lctx;
+      for (const n of still) this.drawTile(n, t);
+      this.ctx = real;
+      lctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    }
+    ctx.globalAlpha = 1;
+    ctx.drawImage(this.tileLayer, r.x, r.y, r.w, r.h);
+
+    for (const n of live) this.drawTile(n, t);
+    if (raised.length) {
+      raised.sort((a, b) => a.z - b.z);
+      for (const n of raised) this.drawTile(n, t);
+    }
+  }
+
   drawTile(n, t) {
     let rot = n.rot, scale = n.scale;
     if (n.shake) rot += shakeAngle(t - n.shakeT0);
@@ -1396,6 +1537,27 @@ export class Game {
       ctx.drawImage(g, this.girl.x - g.w / 2, this.girlBottom - g.h + bob, g.w, g.h);
     }
 
+    // Everything from here to the HUD is the board layer, and the knock of a clear moves all of it
+    // with one translate. The previous version of this added the offset to every tile and every
+    // particle as it was drawn, which is the same picture for about a hundred extra additions a
+    // frame — and it is why the knock had to be taken out for performance once before.
+    ctx.save();
+    this.jx = this.jy = 0;
+    if (this.joltT0 >= 0) {
+      const a = t - this.joltT0;
+      if (a > 0.16) {
+        this.joltT0 = -1;
+      } else {
+        const k = this.joltAmp * Math.exp(-a / 0.045) * Math.sin(a * TAU * 22);
+        // Whole device pixels only. A knock of a third of a pixel still moves the board, but it
+        // makes the browser resample every tile on screen for the 160 ms it lasts — the picture
+        // goes soft exactly when it is moving, and pays for the blur. Snapped, it is a clean shift.
+        this.jx = snap(Math.cos(this.joltAng) * k);
+        this.jy = snap(Math.sin(this.joltAng) * k);
+        ctx.translate(this.jx, this.jy);
+      }
+    }
+
     // drag guides
     if (this.bands) {
       ctx.globalAlpha = 1;
@@ -1403,29 +1565,7 @@ export class Game {
       ctx.drawImage(this.colBand, this.bands.x - this.cell / 2, this.gridTop, this.colBand.w, this.colBand.h);
     }
 
-    // The pair the drag would take, joined by a beam so the choice is never a surprise. It gets a
-    // dark edge because it has to stay readable over both the drag bands and the bare board.
-    if (this.beam) {
-      const bm = this.beam;
-      const e = Math.max(1, this.cell * 0.05);
-      ctx.globalAlpha = 1;
-      ctx.fillStyle = 'rgba(62,70,12,0.35)';
-      ctx.fillRect(bm.x - e, bm.y - e, bm.w + e * 2, bm.h + e * 2);
-      ctx.fillStyle = 'rgba(250,252,33,0.92)';
-      ctx.fillRect(bm.x, bm.y, bm.w, bm.h);
-    }
-
-    // tiles: resting ones first, raised ones (dragged / matching) on top
-    const raised = this.raised;
-    raised.length = 0;
-    for (const n of this.tiles) {
-      if (n.z) raised.push(n);
-      else this.drawTile(n, t);
-    }
-    if (raised.length) {
-      raised.sort((a, b) => a.z - b.z);
-      for (const n of raised) this.drawTile(n, t);
-    }
+    this.drawTiles(t);
 
     if (this.hintArrow) {
       const h = this.hintArrow;
@@ -1446,7 +1586,29 @@ export class Game {
       this.particles.length = alive;
     }
 
+    // shattered tiles: nine pieces each, flung out and falling
+    if (this.frags.length) {
+      const g = this.cell * 16;
+      let alive = 0;
+      for (const f of this.frags) {
+        const a = t - f.t0;
+        if (a > FRAG_LIFE) continue;
+        this.frags[alive++] = f;
+        const sc = (1 - 0.35 * (a / FRAG_LIFE)) * DPR;
+        const rot = f.vr * a;
+        const c = Math.cos(rot) * sc, sn = Math.sin(rot) * sc;
+        const img = f.img;
+        ctx.globalAlpha = a < FRAG_SOLID ? 1 : 1 - (a - FRAG_SOLID) / (FRAG_LIFE - FRAG_SOLID);
+        ctx.setTransform(c, sn, -sn, c,
+          (f.x0 + f.vx * a + this.jx) * DPR, (f.y0 + f.vy * a + 0.5 * g * a * a + this.jy) * DPR);
+        ctx.drawImage(img, -img.w / 2, -img.h / 2, img.w, img.h);
+      }
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      this.frags.length = alive;
+    }
+
     // HUD
+    ctx.restore();
     ctx.globalAlpha = 1;
     const gearPress = this.gear.pressT0 >= 0 ? segments(PRESS, t - this.gear.pressT0, 1) : null;
     if (gearPress === null) this.gear.pressT0 = -1;
