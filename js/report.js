@@ -137,6 +137,16 @@ function clean(text) {
 }
 
 /** Builds the whole report. `d` is Game.diagnostics(). */
+const readSent = () => {
+  try { return JSON.parse(localStorage.getItem('reportSent')) || []; } catch { return []; }
+};
+
+function rememberSent(id, text) {
+  const list = readSent();
+  list.push({ id, text: text.slice(0, 40), at: Date.now() });
+  try { localStorage.setItem('reportSent', JSON.stringify(list.slice(-5))); } catch {}
+}
+
 export function compose(text, tags, d) {
   const id = Math.random().toString(36).slice(2, 6);
   const now = Date.now();
@@ -151,6 +161,11 @@ export function compose(text, tags, d) {
   lines.push(`sent: ${new Date(now).toISOString().slice(0, 16).replace('T', ' ')}Z` +
     ` (her time ${new Date(now).toTimeString().slice(0, 5)}, UTC${-new Date().getTimezoneOffset() / 60 >= 0 ? '+' : ''}${-new Date().getTimezoneOffset() / 60})`);
   lines.push(`playing: ${secs(now - t0)}s this session`);
+  const earlier = readSent();
+  if (earlier.length) {
+    lines.push('earlier reports from this phone (chase one up if it never reached me): ' +
+      earlier.map(e => `#${e.id} "${e.text}"`).join(', '));
+  }
   lines.push('');
 
   if (d) {
@@ -247,6 +262,7 @@ export async function flush() {
   for (const r of q.slice()) {
     try {
       await post(r.id, r.body);
+      rememberSent(r.id, '(queued) ' + r.body.split('\n')[2].slice(0, 28));
       q = readQueue().filter(x => x.id !== r.id);
       writeQueue(q);
     } catch {
@@ -292,6 +308,7 @@ export async function send(text, tags, d) {
   } catch {}
   try {
     await post(id, body);
+    rememberSent(id, clean(text));
     return 'sent';
   } catch {
     enqueue(id, body);
