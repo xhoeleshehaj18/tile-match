@@ -189,8 +189,13 @@ export class Board {
     spots.forEach((p, k) => this.set(p, order[k]));
   }
 
-  /** Share of pairs dealt already touching in Levels mode; eases off as levels go up. */
-  static touchingShare(level) { return Math.max(0.4, 0.5 - (level - 1) * 0.01); }
+  /**
+   * Share of pairs dealt already touching in Levels mode. Measured by simulation: at 0.5 a player
+   * who only taps the obvious pairs clears 55% of the board without thinking, which is why the
+   * early levels felt like nothing. This ramps from 0.30 (about a third clearable on autopilot)
+   * down to 0.04 by level 14, where the board is barely easier than a random deal.
+   */
+  static touchingShare(level) { return Math.max(0.04, 0.3 - (level - 1) * 0.02); }
 
   static generate({ level, cols, rows, kindCount, share, kinds: kindsOverride }) {
     const pairCount = Math.floor(cols * rows / 2);

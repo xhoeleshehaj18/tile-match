@@ -614,29 +614,40 @@ export function sparkle(size) {
 }
 
 export function glow(size) {
+  // The puff's core. In the original this is a solid white ball with a crisp edge, not a soft
+  // glow — the hard edge is most of why the clear reads as a distinct "pop".
   const [c, ctx] = surface(size, size);
   const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  g.addColorStop(0, 'rgba(255,255,255,1)');
-  g.addColorStop(0.5, 'rgba(255,255,255,0.85)');
-  g.addColorStop(1, 'rgba(255,243,192,0)');
+  g.addColorStop(0, '#FFFFFF');
+  g.addColorStop(0.82, '#FFFDF4');
+  g.addColorStop(0.93, 'rgba(255,248,226,0.85)');
+  g.addColorStop(1, 'rgba(255,243,200,0)');
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, size, size);
   return c;
 }
 
 export function ring(size) {
+  // The dust ring a cleared tile leaves behind: measured off the original, where the white puff
+  // hollows out into a speckled cream ring that thins as it fades.
   const [c, ctx] = surface(size, size);
-  const lw = size * 0.06;
-  ctx.strokeStyle = '#F3A350';
+  const mid = size / 2;
+  const lw = size * 0.085;
+  const r = mid - lw;
+  ctx.strokeStyle = '#F7E4BE';
   ctx.lineWidth = lw;
   ctx.beginPath();
-  ctx.arc(size / 2, size / 2, size / 2 - lw * 1.5, 0, Math.PI * 2);
+  ctx.arc(mid, mid, r, 0, Math.PI * 2);
   ctx.stroke();
-  ctx.fillStyle = '#FFE3A6';
-  for (let i = 0; i < 10; i++) {
-    const a = (i / 10) * Math.PI * 2, r = size / 2 - lw * 1.5;
+  // grains around the rim, uneven like the original's
+  ctx.fillStyle = '#FFF6E2';
+  const grains = 13;
+  for (let i = 0; i < grains; i++) {
+    const a = (i / grains) * Math.PI * 2 + (i % 3) * 0.11;
+    const rr = r + (i % 4 - 1.5) * lw * 0.42;
+    const dot = lw * (0.3 + (i % 5) * 0.11);
     ctx.beginPath();
-    ctx.arc(size / 2 + Math.cos(a) * r, size / 2 + Math.sin(a) * r, lw * 0.7, 0, Math.PI * 2);
+    ctx.arc(mid + Math.cos(a) * rr, mid + Math.sin(a) * rr, dot, 0, Math.PI * 2);
     ctx.fill();
   }
   return c;
