@@ -11,7 +11,7 @@ import { VERSION } from './version.js';
 // The relay forwards the report to my email. Its key is public by design — it can only submit
 // to my own form, and it accepts one plain-text message and nothing else. Empty = copy only.
 const ENDPOINT = 'https://api.web3forms.com/submit';
-const ACCESS_KEY = '';
+const ACCESS_KEY = 'dd69cd41-6228-4b36-b472-e9e79c21dc82';
 
 const MAX_TEXT = 600;      // she only needs a sentence; the diagnostics carry the detail
 const MAX_LOG = 60;        // recent actions kept in memory
