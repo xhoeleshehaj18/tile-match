@@ -26,6 +26,26 @@
   <div id="ui"></div>
   <div id="safe-probe"></div>
   <div id="lvh-probe"></div>
+  <!-- Opening animation. Plain HTML + CSS so it is on screen from the very first paint and
+       fades itself out even if a script fails; js/splash.js adds the rider, skipping and replays. -->
+  <div id="splash" class="play" aria-hidden="true">
+    <div class="sp-scene">
+      <div class="sp-sun"></div>
+      <div class="sp-title">
+        <div class="sp-row"><span class="sp-t">T</span><span class="sp-t">I</span><span class="sp-t">L</span><span class="sp-t">E</span></div>
+        <div class="sp-row"><span class="sp-t">M</span><span class="sp-t">A</span><span class="sp-t">T</span><span class="sp-t">C</span><span class="sp-t">H</span></div>
+      </div>
+      <div class="sp-pair">
+        <span class="sp-t sp-a">💖</span><span class="sp-t sp-b">💖</span>
+        <div class="sp-burst"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <span class="sp-heart">💕</span>
+      </div>
+      <p class="sp-sub">made for you</p>
+      <div class="sp-road"></div>
+      <div class="sp-home"></div>
+      <div class="sp-rider"><div class="sp-bob"></div></div>
+    </div>
+  </div>
   <script type="module" src="js/main.js"></script>
 </body>
 </html>

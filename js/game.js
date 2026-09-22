@@ -553,6 +553,12 @@ export class Game {
     this.warmFragPieces();
   }
 
+  /** Replays the opening deal as the splash screen lifts, unless she is in the middle of something. */
+  dealIn() {
+    if (!this.built || this.busy || this.drag || this.selected || this.hinted.length || this.ui.anyOpen) return;
+    this.rebuildTiles(true);
+  }
+
   placeGirl() {
     if (this.levelTileTotal <= 0) return;
     this.girl.x = this.girlHomeX + (this.girlGoalX - this.girlHomeX) * (1 - this.board.tileCount / this.levelTileTotal);

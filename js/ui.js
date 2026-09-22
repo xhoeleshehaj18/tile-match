@@ -26,45 +26,67 @@ function button(label, onClick, variant = 'blue') {
   return b;
 }
 
-function toggle(label, on, onChange) {
+function rowLabel(icon, text) {
+  const el = h('span', 'row-label');
+  el.append(h('span', 'row-icon', icon), h('span', '', text));
+  return el;
+}
+
+function toggle(icon, label, on, onChange) {
   const row = h('label', 'row');
-  row.append(h('span', '', label));
+  row.append(rowLabel(icon, label));
   const input = h('input', 'switch');
   input.type = 'checkbox';
   input.checked = on;
-  input.addEventListener('change', () => onChange(input.checked));
+  input.addEventListener('change', () => { onChange(input.checked); sound.play('tap'); });
   row.append(input);
   return row;
 }
 
-/** A 0–100% slider. Dragging it plays a tap at the new level so she can hear what she is choosing. */
-function slider(label, value, onChange) {
-  const row = h('label', 'row');
-  row.append(h('span', '', label));
+/**
+ * Sound on/off and volume in one row: the speaker mutes, the slider sets the level (and turns the
+ * sound back on). Dragging plays a tap at the new level so she can hear what she is choosing.
+ */
+function volumeRow() {
+  const row = h('div', 'row volume');
+  const mute = h('button', 'mute');
   const input = h('input', 'slider');
   input.type = 'range';
   input.min = '0';
   input.max = '100';
   input.step = '5';
-  input.value = String(Math.round(value * 100));
-  input.setAttribute('aria-label', label);
-  const paint = () => input.style.setProperty('--fill', `${input.value}%`);
+  input.value = String(Math.round(sound.volume * 100));
+  input.setAttribute('aria-label', L.volume());
+  const paint = () => {
+    const on = sound.enabled && sound.volume > 0;
+    mute.textContent = on ? '🔊' : '🔇';
+    mute.setAttribute('aria-label', L.sound());
+    mute.setAttribute('aria-pressed', String(on));
+    row.classList.toggle('off', !on);
+    input.style.setProperty('--fill', `${input.value}%`);
+  };
   paint();
+  mute.addEventListener('click', () => {
+    sound.unlock();
+    sound.setEnabled(!sound.enabled);
+    if (sound.enabled && sound.volume <= 0) { sound.setVolume(0.5); input.value = '50'; }
+    paint();
+    sound.play('tap');
+  });
   let lastHeard = -1;
   input.addEventListener('input', () => {
     const v = Number(input.value) / 100;
+    sound.setVolume(v);
+    if (v > 0 && !sound.enabled) sound.setEnabled(true);
     paint();
-    onChange(v);
     // one preview per step, so sliding doesn't fire a burst of overlapping taps
     if (v > 0 && input.value !== lastHeard) { lastHeard = input.value; sound.play('tap'); }
   });
-  row.append(input);
+  row.append(mute, input);
   return row;
 }
 
-function segmented(label, options, value, onChange) {
-  const row = h('div', 'row');
-  row.append(h('span', '', label));
+function segmented(options, value, onChange) {
   const seg = h('div', 'segmented');
   for (const [val, text] of options) {
     const b = h('button', val === value ? 'on' : '', text);
@@ -76,8 +98,15 @@ function segmented(label, options, value, onChange) {
     });
     seg.append(b);
   }
-  row.append(seg);
-  return row;
+  return seg;
+}
+
+/** A small icon button with a caption, for the footer row. */
+function tool(icon, label, onClick) {
+  const b = h('button', 'tool');
+  b.append(h('span', 'tool-icon', icon), h('span', 'tool-label', label));
+  b.addEventListener('click', () => { sound.play('tap'); onClick(); });
+  return b;
 }
 
 /** Makes sure the newest files are stored on the phone (installing a new build if there is one). */
@@ -176,93 +205,87 @@ export class UI {
     const layer = this.layers.settings;
     layer.replaceChildren();
     const [scrim, panel] = this.panel(L.settings());
+    panel.classList.add('settings-panel');
     scrim.addEventListener('click', () => this.hide('settings'));
 
-    const rows = h('div', 'rows');
-    const volume = slider(L.volume(), sound.volume, v => sound.setVolume(v));
-    volume.classList.toggle('dim', !sound.enabled);
-    rows.append(toggle(L.sound(), sound.enabled, on => {
-      sound.setEnabled(on);
-      volume.classList.toggle('dim', !on);
-      if (on) sound.play('tap');
-    }));
-    rows.append(volume);
-    if (sound.canVibrate) rows.append(toggle(L.vibration(), sound.haptics, on => sound.setHaptics(on)));
-    rows.append(segmented(L.language(), [[false, 'English'], [true, '中文']], isChinese(), zh => {
+    // Mode first: it's the one choice that changes the game. One line says what the chosen one is.
+    const hints = { levels: L.levelsHint, challenge: L.challengeHint, big: L.bigHint };
+    const mode = segmented([['levels', L.levelsMode()], ['challenge', L.challengeMode()], ['big', L.bigMode()]], this.game.mode, m => {
+      this.game.switchMode(m);
+      this.openSettings();
+    });
+    mode.classList.add('wide');
+    panel.append(mode, h('p', 'hint', hints[this.game.mode]()));
+
+    const group = h('div', 'group');
+    group.append(volumeRow());
+    if (sound.canVibrate) group.append(toggle('📳', L.vibration(), sound.haptics, on => sound.setHaptics(on)));
+    const lang = h('div', 'row');
+    lang.append(rowLabel('🌐', L.language()), segmented([[false, 'EN'], [true, '中文']], isChinese(), zh => {
       setChinese(zh);
       this.game.refreshLanguage();
       this.openSettings();
     }));
-    rows.append(segmented(L.mode(), [['levels', L.levelsMode()], ['challenge', L.challengeMode()], ['big', L.bigMode()]], this.game.mode, mode => {
-      this.game.switchMode(mode);
-      this.openSettings();
-    }));
-    rows.append(h('p', 'note', L.modeHint()));
-    panel.append(rows);
+    group.append(lang);
+    panel.append(group);
 
-    // Right above Continue, so a slip of the thumb must not cost her the board (and in Challenge,
-    // her streak): a game in progress takes a second tap within a few seconds.
+    // Continue is the big one. Restart sits under it, smaller, and a game in progress takes a
+    // second tap within a few seconds so a slip can't cost her the board (or her streak).
+    panel.append(button(L.resume(), () => this.hide('settings')));
     const levels = this.game.relaxed;
     const label = levels ? L.restartLevel() : L.newGame();
     let armed = 0;
     const restart = button(label, () => {
       if (this.game.inProgress && !armed) {
         restart.textContent = levels ? L.confirmRestart() : L.confirmNewGame();
-        armed = setTimeout(() => { armed = 0; restart.textContent = label; }, 3000);
+        restart.classList.add('armed');
+        armed = setTimeout(() => { armed = 0; restart.textContent = label; restart.classList.remove('armed'); }, 3000);
         return;
       }
       clearTimeout(armed);
       armed = 0;
       this.hide('settings');
       this.game.restartLevel();
-    }, 'orange');
+    }, 'orange slim');
     panel.append(restart);
-    panel.append(button(L.resume(), () => this.hide('settings')));
-    panel.append(this.updateButton());
+
+    // the rarely needed things, as one quiet row of icons
+    const status = h('p', 'note status-line');
+    const tools = h('div', 'tools');
+    tools.append(this.updateTool(status));
     if (!standalone()) {
-      const safe = h('button', 'update-btn', L.keepSafe());
-      safe.addEventListener('click', () => {
-        sound.play('tap');
-        this.hide('settings');
-        this.openKeepSafe();
-      });
-      panel.append(safe);
+      tools.append(tool('📲', L.keepSafeShort(), () => { this.hide('settings'); this.openKeepSafe(); }));
     }
-    const bug = h('button', 'update-btn', L.reportBug());
-    bug.addEventListener('click', () => {
-      sound.play('tap');
-      this.hide('settings');
-      this.openReport();
-    });
-    panel.append(bug);
-    panel.append(h('p', 'version', L.version(VERSION)));
+    tools.append(tool('🐞', L.reportShort(), () => { this.hide('settings'); this.openReport(); }));
+    panel.append(tools);
     const waiting = report.pending();
-    if (waiting) panel.append(h('p', 'note waiting', L.reportWaiting(waiting)));
+    status.textContent = waiting ? L.reportWaiting(waiting) : L.version(VERSION);
+    panel.append(status);
     layer.append(scrim, panel);
     this.show('settings');
   }
 
   /** "Check for updates": asks the server for the newest version, downloads it fresh and restarts. */
-  updateButton() {
-    const b = h('button', 'update-btn', L.checkUpdates());
-    b.addEventListener('click', async () => {
+  updateTool(status) {
+    const b = tool('🔄', L.updateShort(), async () => {
       if (b.disabled) return;
       b.disabled = true;
-      sound.play('tap');
-      b.textContent = L.checking();
+      b.classList.add('busy');
+      status.textContent = L.checking();
       try {
         const res = await fetch(`version.json?t=${Date.now()}`, { cache: 'no-store' });
         const latest = (await res.json()).version;
-        if (latest > VERSION) b.textContent = L.updating(latest);
+        if (latest > VERSION) status.textContent = L.updating(latest);
         await forceUpdate();
         if (latest > VERSION) {
           location.reload();
           return;
         }
-        b.textContent = L.upToDate(VERSION);
+        status.textContent = L.upToDate(VERSION);
       } catch {
-        b.textContent = L.updateFailed();
+        status.textContent = L.updateFailed();
       }
+      b.classList.remove('busy');
       b.disabled = false;
     });
     return b;

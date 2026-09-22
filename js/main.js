@@ -6,6 +6,7 @@ if (window.top !== window.self) {
 
 // First: puts back progress Safari may have cleared, before anything reads it (see backup.js).
 import './backup.js';
+import * as splash from './splash.js';
 import { Game } from './game.js';
 import { UI } from './ui.js';
 import { sound } from './sound.js';
@@ -36,9 +37,16 @@ document.addEventListener('visibilitychange', () => {
 });
 addEventListener('online', () => report.flush());
 
-// A game saved in a browser tab can be cleared by Safari (or WeChat); suggest the Home Screen,
-// once the opening deal has landed.
-setTimeout(() => ui.maybeNudgeKeepSafe(), 2500);
+// The board deals in as the opening animation fades, so she sees it land. A game saved in a
+// browser tab can be cleared by Safari (or WeChat): suggest the Home Screen once the deal is done.
+let firstReveal = true;
+splash.whenRevealed(() => {
+  game.dealIn();
+  if (firstReveal) {
+    firstReveal = false;
+    setTimeout(() => ui.maybeNudgeKeepSafe(), 2000);
+  }
+});
 
 let lastSize = '';
 function fit() {
