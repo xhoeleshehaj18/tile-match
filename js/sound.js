@@ -1,6 +1,6 @@
 // Plays the synthesized effects (see sfx.js) through Web Audio.
 
-import { SFX, bell, COMBO_STEPS, COMBO_BASE } from './sfx.js';
+import { SFX, bell, clear, CLEAR_VARIANTS, COMBO_STEPS, COMBO_BASE } from './sfx.js';
 
 /** A missing or damaged saved volume falls back to full, which is what it was before the slider. */
 const clamp01 = v => (Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 1);
@@ -14,6 +14,8 @@ class Sound {
     this.master = null;
     this.buffers = {};
     this.bells = [];
+    this.clears = [];
+    this.lastClear = -1;
     // Respect the iPhone's silent switch, like a normal game.
     try { if (navigator.audioSession) navigator.audioSession.type = 'ambient'; } catch {}
   }
@@ -46,6 +48,7 @@ class Sound {
         return b;
       };
       for (const [name, fn] of Object.entries(SFX)) this.buffers[name] = make(fn(sr));
+      this.clears = Array.from({ length: CLEAR_VARIANTS }, (_, v) => make(clear(sr, v)));
       this.bells = COMBO_STEPS.map(st => make(bell(sr, COMBO_BASE * Math.pow(2, st / 12))));
     }
     if (this.ctx.state === 'suspended') this.ctx.resume();
@@ -56,11 +59,14 @@ class Sound {
     this.start(this.buffers[name], rate, gain);
   }
 
-  /** A clear: the crunch, slightly varied each time, plus a bell that climbs with the combo. */
+  /** A clear: the pop and chime (one of a few versions, never the same twice running), plus a
+   *  bell that climbs with the combo. Played at its own pitch so it stays in tune with the bell. */
   clear(combo) {
     if (!this.enabled || this.volume <= 0 || !this.ctx) return;
-    // the original plays the same clear every time; only a touch of variation so it doesn't tire
-    this.start(this.buffers.clear, 0.98 + Math.random() * 0.04, 1);
+    let v = Math.floor(Math.random() * (this.clears.length - 1));
+    if (v >= this.lastClear) v++;
+    this.lastClear = v;
+    this.start(this.clears[v], 1, 1);
     if (combo >= 2) this.start(this.bells[Math.min(combo - 2, this.bells.length - 1)], 1, 0.9);
   }
 

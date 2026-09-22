@@ -1,5 +1,7 @@
 // Saved progress in localStorage, mirroring the iOS keys.
 
+import { changed } from './backup.js';
+
 export const store = {
   int(key, fallback = 0) {
     const v = localStorage.getItem(key);
@@ -15,8 +17,12 @@ export const store = {
     try {
       localStorage.setItem(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
     } catch {}
+    changed();
   },
-  remove(key) { localStorage.removeItem(key); },
+  remove(key) {
+    try { localStorage.removeItem(key); } catch {}
+    changed();
+  },
 };
 
 /** Lifetime Challenge record: best score, wins and win streaks. */
@@ -45,4 +51,8 @@ export const Stats = {
   },
 };
 
-export const savedMode = () => (localStorage.getItem('mode') === 'challenge' ? 'challenge' : 'levels');
+export const MODES = ['levels', 'challenge', 'big'];
+export const savedMode = () => {
+  const m = localStorage.getItem('mode');
+  return MODES.includes(m) ? m : 'levels';
+};

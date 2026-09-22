@@ -268,6 +268,17 @@ html.standalone .overlay { bottom: auto; height: 100lvh; }
 }
 @keyframes throb { from { transform: scale(0.92); } to { transform: scale(1.1); } }
 
+.why { margin: 0; font-size: 16px; font-weight: 600; line-height: 1.35; opacity: 0.8; }
+.steps {
+  margin: 0;
+  padding: 0 0 0 26px;
+  text-align: left;
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+.steps li + li { margin-top: 6px; }
+
 .record { display: flex; flex-direction: column; gap: 3px; }
 .record .streak { font-size: 17px; font-weight: 800; color: #E6660D; }
 .record .games { font-size: 14px; font-weight: 600; opacity: 0.55; }

@@ -7,6 +7,7 @@
 // that doesn't get through is queued and retried the next time the game is opened.
 
 import { VERSION } from './version.js';
+import { restoredFromLink, persisted } from './backup.js';
 
 // The relay forwards the report to my email. Its key is public by design — it can only submit
 // to my own form, and it accepts one plain-text message and nothing else. Empty = copy only.
@@ -104,7 +105,11 @@ function deviceLine() {
     standalone ? 'home-screen app' : 'browser tab',
   ];
   if (os) bits.push('iOS ' + os.replace('_', '.'));
+  if (/MicroMessenger/i.test(ua)) bits.push('WeChat');
   if (!navigator.onLine) bits.push('OFFLINE');
+  // lost progress is its own class of bug: say how safe the saved game is
+  bits.push(persisted === true ? 'storage kept' : persisted === false ? 'storage clearable' : 'storage ?');
+  if (restoredFromLink) bits.push('PROGRESS RESTORED FROM LINK this session');
   if (navigator.deviceMemory) bits.push(navigator.deviceMemory + 'GB');
   // "it didn't update" is its own class of bug: say whether the cache is actually in charge
   if ('serviceWorker' in navigator) bits.push(navigator.serviceWorker.controller ? 'cached build' : 'no service worker');
@@ -169,7 +174,7 @@ export function compose(text, tags, d) {
   lines.push('');
 
   if (d) {
-    lines.push(`mode: ${d.mode}` + (d.mode === 'levels' ? ` · level ${d.level}` : ` · score ${d.score} · best ${d.best}`));
+    lines.push(`mode: ${d.mode}` + (d.mode !== 'challenge' ? ` · level ${d.level}` : ` · score ${d.score} · best ${d.best}`));
     lines.push(`tiles: ${d.tiles} of ${d.total} left · a move exists: ${d.hasMove}`);
     lines.push(`power-ups: ${d.hints} hints · ${d.shuffles} shuffles` + (d.secondChanceUsed ? ' · second chance used' : ''));
     lines.push(`state: busy=${d.busy} finishing=${d.finishing} pointer=${d.pointer} drag=${d.drag}` +

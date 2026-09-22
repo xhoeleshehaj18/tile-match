@@ -11,13 +11,22 @@ import { VERSION } from './version.js';
 import { photos } from './photos.js';
 import * as report from './report.js';
 
-export const COLS = 10;
-export const ROWS = 14;
+// Board size per mode. Big was chosen by rendering 11×15 up to 14×20 on phone-sized screens: at
+// 12×17 a tile is still ~30 pt on a standard iPhone (about the size of body-text emoji), and one
+// more column or row is where icons start to blur together and taps land on the neighbour.
+const GRIDS = { levels: [10, 14], challenge: [10, 14], big: [12, 17] };
+// ?grid=13x18 on the local test server tries another size for the Big board
+const GRID_TEST = location.hostname === 'localhost' && /^(\d+)x(\d+)$/.exec(new URLSearchParams(location.search).get('grid') ?? '');
+if (GRID_TEST) GRIDS.big = [+GRID_TEST[1], +GRID_TEST[2]];
 // Plain emoji only: no U+FE0F "emoji style" marker, which Safari mis-measures (the ⭐️ tile drew off-centre).
 export const KINDS = ['🍩', '🍄', '🍱', '🍞', '🦪', '🐮', '🍦', '🔥', '🦉', '🦄', '🐰', '🥚',
   '🍉', '🍅', '🍚', '🐼', '🧁', '🍰', '🐱', '🐶', '🦊', '🐸', '🐧', '🐥',
   '🍓', '🍒', '🍑', '🍋', '🥑', '🌽', '🥕', '🍪', '🍭', '🌸', '🌻', '⭐',
-  '🎀', '💎', '🧸', '🎈', '🍔', '🍟', '🍕', '🐙', '🦋', '🐝', '🐢', '🐳'];
+  '🎀', '💎', '🧸', '🎈', '🍔', '🍟', '🍕', '🐙', '🦋', '🐝', '🐢', '🐳',
+  // the Big board only: more tiles need more kinds, or every icon would show up six times
+  '🍇', '🍍', '🥝', '🍌', '🐨', '🐷', '🐹', '🦔', '🍬', '🌈', '🌵', '🐞'];
+// Levels and Challenge deal from the first 48, which is what their difficulty was tuned with.
+const BASE_KINDS = 48;
 
 // Challenge: tuned by simulation so a careless player wins about 1 in 4 games and a careful one
 // who uses the second chance wins most of them.
@@ -135,7 +144,7 @@ export class Game {
     this.nodes = new Map();   // live tiles by id
 
     this.mode = savedMode();
-    this.board = new Board(COLS, ROWS);
+    this.board = new Board(this.cols, this.rows);
     this.levelTileTotal = 0;
     this.selected = null;
     this.peerIds = [];
@@ -176,12 +185,17 @@ export class Game {
 
   get busy() { return this.finishing || now() < this.busyUntil; }
 
+  get cols() { return GRIDS[this.mode][0]; }
+  get rows() { return GRIDS[this.mode][1]; }
+  /** Levels and Big can't be lost: power-ups refill with a photo break and a stuck board reshuffles. */
+  get relaxed() { return this.mode !== 'challenge'; }
+
   // ------------------------------------------------------------ state
 
-  key(k) { return this.mode === 'challenge' ? k : 'levels.' + k; }
+  key(k) { return this.mode === 'challenge' ? k : this.mode + '.' + k; }
 
   loadState() {
-    const levels = this.mode === 'levels';
+    const levels = this.relaxed;
     this.hints = store.int(this.key('hints'), levels ? LEVELS_HINTS : START_HINTS);
     this.shuffles = store.int(this.key('shuffles'), levels ? LEVELS_SHUFFLES : START_SHUFFLES);
     this.secondChanceUsed = store.bool(this.key('secondChanceUsed'));
@@ -210,7 +224,7 @@ export class Game {
 
   /** Picks up a game that was in progress when the page was closed. */
   restoreBoard() {
-    const saved = Board.fromSnapshot(COLS, ROWS, store.json(this.key('board')));
+    const saved = Board.fromSnapshot(this.cols, this.rows, store.json(this.key('board')));
     if (!saved) return false;
     this.board = saved;
     this.levelTileTotal = Math.max(store.int(this.key('boardTotal')), saved.tileCount);
@@ -233,6 +247,8 @@ export class Game {
     const W = width, H = height;
     this.W = W;
     this.H = H;
+    this.safe = safe;
+    const COLS = this.cols, ROWS = this.rows;
     this.canvas.width = Math.round(W * DPR);
     this.canvas.height = Math.round(H * DPR);
     const s = (this.s = W / 592);
@@ -396,7 +412,7 @@ export class Game {
 
   updateScore(animated = true) {
     const s = this.s;
-    const levels = this.mode === 'levels';
+    const levels = this.relaxed;
     this.scoreSprite = levels
       ? Art.pill(L.level(this.level), 38 * s, { reuse: this.scoreSprite })
       : Art.scorePill(String(this.score), 38 * s, this.scoreSprite);
@@ -423,8 +439,7 @@ export class Game {
   /** Deals a fresh board. In Challenge, walking away from a game in progress (or a lost one) counts as a loss. */
   startLevel() {
     if (this.mode === 'challenge') {
-      const inProgress = this.levelTileTotal > 0 && !this.board.isEmpty && this.board.tileCount < this.levelTileTotal;
-      if (this.lostPending || (inProgress && !this.finishing)) Stats.recordLoss();
+      if (this.lostPending || this.inProgress) Stats.recordLoss();
       this.hints = START_HINTS;
       this.shuffles = START_SHUFFLES;
       this.secondChanceUsed = false;
@@ -444,9 +459,13 @@ export class Game {
     this.hinted = [];
     this.hintArrow = null;
     this.combo = 0;
+    const size = { cols: this.cols, rows: this.rows };
     this.board = this.mode === 'challenge'
-      ? Board.generate({ level: 1, cols: COLS, rows: ROWS, kindCount: KINDS.length, share: TOUCHING_SHARE, kinds: KINDS.length })
-      : Board.generate({ level: this.level, cols: COLS, rows: ROWS, kindCount: KINDS.length });
+      ? Board.generate({ ...size, level: 1, kindCount: BASE_KINDS, share: TOUCHING_SHARE, kinds: BASE_KINDS })
+      : this.mode === 'big'
+        // 102 pairs over 44 kinds and up: most icons come in two pairs, a few in three
+        ? Board.generate({ ...size, level: this.level, kindCount: KINDS.length, kinds: 44 + (this.level - 1) * 2 })
+        : Board.generate({ ...size, level: this.level, kindCount: BASE_KINDS });
     this.levelTileTotal = this.board.tileCount;
     this.saveBoard();
     this.anim.cancel(this.girl);
@@ -457,10 +476,15 @@ export class Game {
     this.rebuildTiles(true);
   }
 
+  /** Part of the board cleared and the game not over: starting again would throw this away. */
+  get inProgress() {
+    return !this.finishing && this.levelTileTotal > 0 && !this.board.isEmpty && this.board.tileCount < this.levelTileTotal;
+  }
+
   restartLevel() { this.startLevel(); }
   nextLevel() { this.startLevel(); }
 
-  /** Switches between Levels and Challenge. The game being left stays saved and resumes when you come back. */
+  /** Switches between Levels, Challenge and Big. The game being left stays saved and resumes when you come back. */
   switchMode(mode) {
     if (mode === this.mode) return;
     this.save();
@@ -468,6 +492,7 @@ export class Game {
     this.cancelTimer('win');
     this.cancelTimer('check');
     this.cancelDrag();
+    const resized = String(GRIDS[mode]) !== String(GRIDS[this.mode]);
     this.mode = mode;
     localStorage.setItem('mode', mode);
     this.loadState();
@@ -477,7 +502,9 @@ export class Game {
     this.hinted = [];
     this.hintArrow = null;
     this.combo = 0;
-    this.board = new Board(COLS, ROWS);
+    this.board = new Board(this.cols, this.rows);
+    // a different grid means a different cell size: every sprite and the tile layer are rebuilt
+    if (resized) this.layout(this.W, this.H, this.safe);
     this.shuffleBtn.attention = false;
     this.anim.cancel(this, 'tileAlpha');
     this.tileAlpha = 1;
@@ -983,8 +1010,8 @@ export class Game {
     } else if (!this.board.hasMove) {
       this.clearHint();
       this.clearSelection();
-      if (this.mode === 'levels') {
-        // Levels can't be lost: a stuck board reshuffles for free
+      if (this.relaxed) {
+        // Levels and Big can't be lost: a stuck board reshuffles for free
         this.toast(L.noMovesShuffling());
         this.after(0.8, () => this.performShuffle());
         this.busyUntil = now() + 0.9;
@@ -1210,7 +1237,7 @@ export class Game {
 
   useShuffle() {
     if (this.shuffles === 0) {
-      if (this.mode === 'levels') {
+      if (this.relaxed) {
         this.ui.requestPhotoBreak('shuffle');
       } else if (this.secondChanceUsed) {
         this.toast(L.noShufflesLeft());
@@ -1230,7 +1257,7 @@ export class Game {
   grant(kind) {
     if (kind === 'hint') {
       this.hints += 3;
-    } else if (this.mode === 'levels') {
+    } else if (this.relaxed) {
       this.shuffles += 3;
     } else {
       this.secondChanceUsed = true;
@@ -1293,7 +1320,7 @@ export class Game {
         this.burst(b.x + rand(0.15, 0.85) * b.w, b.y + rand(0.2, 0.7) * b.h);
       });
     }
-    if (this.mode === 'levels') {
+    if (this.relaxed) {
       const cleared = this.level;
       this.level++;
       this.save();
@@ -1707,7 +1734,7 @@ export class Game {
     if (this.busy || this.board.isEmpty || this.drag) return;
     const move = this.board.findMove(slidesFirst);
     if (!move) {
-      if (this.shuffles > 0 || this.mode === 'levels' || !this.secondChanceUsed) this.useShuffle();
+      if (this.shuffles > 0 || this.relaxed || !this.secondChanceUsed) this.useShuffle();
       return;
     }
     if (move.type === 'pair') {
@@ -1727,31 +1754,31 @@ export class Game {
   }
 
   debugStuck() {
-    const b = new Board(COLS, ROWS);
-    for (const p of b.allCells()) b.set(p, { id: p.r * COLS + p.c, kind: (p.c + p.r * 3) % KINDS.length });
+    const b = new Board(this.cols, this.rows);
+    for (const p of b.allCells()) b.set(p, { id: p.r * this.cols + p.c, kind: (p.c + p.r * 3) % KINDS.length });
     this.board = b;
-    this.levelTileTotal = COLS * ROWS;
+    this.levelTileTotal = this.cols * this.rows;
     this.rebuildTiles(false);
     this.checkBoard();
   }
 
   /** Every tile icon on the board at once, to check they all render centred. */
   debugAllKinds() {
-    const b = new Board(COLS, ROWS);
-    KINDS.forEach((_, k) => b.set({ c: k % COLS, r: Math.floor(k / COLS) }, { id: k, kind: k }));
+    const b = new Board(this.cols, this.rows);
+    KINDS.forEach((_, k) => b.set({ c: k % this.cols, r: Math.floor(k / this.cols) }, { id: k, kind: k }));
     this.board = b;
-    this.levelTileTotal = COLS * ROWS;
+    this.levelTileTotal = this.cols * this.rows;
     this.rebuildTiles(false);
   }
 
   debugEndgame() {
-    const b = new Board(COLS, ROWS);
+    const b = new Board(this.cols, this.rows);
     b.set({ c: 1, r: 2 }, { id: 9001, kind: 0 });
     b.set({ c: 6, r: 5 }, { id: 9002, kind: 0 });
     b.set({ c: 3, r: 9 }, { id: 9003, kind: 1 });
     b.set({ c: 8, r: 11 }, { id: 9004, kind: 1 });
     this.board = b;
-    this.levelTileTotal = COLS * ROWS;
+    this.levelTileTotal = this.cols * this.rows;
     this.rebuildTiles(false);
     this.placeGirl();
   }

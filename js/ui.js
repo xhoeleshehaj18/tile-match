@@ -14,6 +14,12 @@ const h = (tag, cls, text) => {
   return el;
 };
 
+/** Playing from a Home Screen icon, where Safari never clears the saved game. */
+const standalone = () => navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+const inWeChat = () => /MicroMessenger/i.test(navigator.userAgent);
+const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
 function button(label, onClick, variant = 'blue') {
   const b = h('button', `chunky ${variant}`, label);
   b.addEventListener('click', () => { sound.unlock(); sound.play('tap'); onClick(); });
@@ -113,7 +119,7 @@ export class UI {
     this.revivePending = null;
     this.breakKind = null;
     this.layers = {};
-    for (const name of ['settings', 'result', 'photo', 'report']) {
+    for (const name of ['settings', 'result', 'photo', 'report', 'keepSafe']) {
       const layer = h('div', `overlay ${name}`);
       layer.setAttribute('aria-hidden', 'true');
       root.append(layer);
@@ -187,19 +193,41 @@ export class UI {
       this.game.refreshLanguage();
       this.openSettings();
     }));
-    rows.append(segmented(L.mode(), [['levels', L.levelsMode()], ['challenge', L.challengeMode()]], this.game.mode, mode => {
+    rows.append(segmented(L.mode(), [['levels', L.levelsMode()], ['challenge', L.challengeMode()], ['big', L.bigMode()]], this.game.mode, mode => {
       this.game.switchMode(mode);
       this.openSettings();
     }));
     rows.append(h('p', 'note', L.modeHint()));
     panel.append(rows);
 
-    panel.append(button(this.game.mode === 'levels' ? L.restartLevel() : L.newGame(), () => {
+    // Right above Continue, so a slip of the thumb must not cost her the board (and in Challenge,
+    // her streak): a game in progress takes a second tap within a few seconds.
+    const levels = this.game.relaxed;
+    const label = levels ? L.restartLevel() : L.newGame();
+    let armed = 0;
+    const restart = button(label, () => {
+      if (this.game.inProgress && !armed) {
+        restart.textContent = levels ? L.confirmRestart() : L.confirmNewGame();
+        armed = setTimeout(() => { armed = 0; restart.textContent = label; }, 3000);
+        return;
+      }
+      clearTimeout(armed);
+      armed = 0;
       this.hide('settings');
       this.game.restartLevel();
-    }, 'orange'));
+    }, 'orange');
+    panel.append(restart);
     panel.append(button(L.resume(), () => this.hide('settings')));
     panel.append(this.updateButton());
+    if (!standalone()) {
+      const safe = h('button', 'update-btn', L.keepSafe());
+      safe.addEventListener('click', () => {
+        sound.play('tap');
+        this.hide('settings');
+        this.openKeepSafe();
+      });
+      panel.append(safe);
+    }
     const bug = h('button', 'update-btn', L.reportBug());
     bug.addEventListener('click', () => {
       sound.play('tap');
@@ -325,6 +353,47 @@ export class UI {
     if (!offerShare) setTimeout(() => this.hide('report'), 2600);
   }
 
+  // ---------------------------------------------------------------- keeping progress safe
+
+  /** How to move the game onto the Home Screen, where its saved progress is never cleared. */
+  openKeepSafe() {
+    const layer = this.layers.keepSafe;
+    layer.replaceChildren();
+    const [scrim, panel] = this.panel(L.keepSafeTitle());
+    const close = () => this.hide('keepSafe');
+    scrim.addEventListener('click', close);
+    const wechat = inWeChat();
+    panel.append(h('div', 'big-emoji', '📲'));
+    panel.append(h('p', 'why', wechat ? L.keepSafeWeChatWhy() : L.keepSafeWhy()));
+    const steps = h('ol', 'steps');
+    const list = wechat ? L.keepSafeWeChatSteps() : isIOS() ? L.keepSafeSteps() : L.keepSafeOtherSteps();
+    for (const step of list) steps.append(h('li', '', step));
+    panel.append(steps);
+    panel.append(button(L.gotIt(), close));
+    layer.append(scrim, panel);
+    this.show('keepSafe');
+  }
+
+  /**
+   * Once on opening, and again every few days while she still plays in a browser tab: a tab's
+   * saved game is the one Safari deletes. Never on a Home Screen icon, never over another panel.
+   */
+  maybeNudgeKeepSafe(force = false) {
+    if (!force) {
+      if (standalone() || !matchMedia('(pointer: coarse)').matches) return;
+      let lastShown = 0;
+      try { lastShown = Number(localStorage.getItem('keepSafeAt')) || 0; } catch {}
+      if (Date.now() - lastShown < 3 * 24 * 3600e3) return;
+    }
+    if (this.anyOpen || this.breakKind || this.game.drag) {
+      setTimeout(() => this.maybeNudgeKeepSafe(force), 10000);
+      return;
+    }
+    try { localStorage.setItem('keepSafeAt', String(Date.now())); } catch {}
+    report.note('keepSafe', inWeChat() ? 'wechat' : isIOS() ? 'ios' : 'other');
+    this.openKeepSafe();
+  }
+
   // ---------------------------------------------------------------- results
 
   showResult(r) {
@@ -428,7 +497,7 @@ export class UI {
         return;
       }
       clearInterval(this.breakTimer);
-      const label = kind === 'hint' ? L.collect('hint') : this.game.mode === 'levels' ? L.collectShuffles() : L.collect('shuffle');
+      const label = kind === 'hint' ? L.collect('hint') : this.game.relaxed ? L.collectShuffles() : L.collect('shuffle');
       bottom.replaceChildren(button(label, () => this.finishPhotoBreak(true), 'pink'));
     }, 1000);
   }

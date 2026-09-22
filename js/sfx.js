@@ -6,8 +6,8 @@
 //  - tap:   a short woody knock (~1.45 kHz, tone rises ~90 Hz in the first few ms) on an ~88 Hz body
 //           thump, a tiny rebound, then three soft rattles at ~72/101/126 ms; ~0.15 s in all.
 //  - fail:  a dry, clattering knock in the 1.5-2.3 kHz region (spring-back after a bad drag).
-//  - clear: a crack, ~65 ms of sizzle, then a full-band crackling burst (firework-like) with a low
-//           thump, fading over ~0.9 s. No pitch variation between plays in the original.
+//  - clear: our own, not the original's (whose crackling burst sounded like an explosion): a soft
+//           pop, a rising two-note chime and a few glass tinkles, ringing out naturally.
 // Nothing here is derived from recorded audio data: every sound is built from chosen parameters.
 
 /** Small deterministic PRNG so every build of a sound is identical. */
@@ -100,10 +100,10 @@ function normalize(data, peak) {
   return data;
 }
 
-// Output levels (sample peak). Chosen so that, like the original, the clear is the loudest effect
-// and a tap sits ~7 dB below it (K-weighted short-term loudness), while leaving headroom for
-// several clears overlapping during fast combos.
-const LEVEL = { tap: 0.9, fail: 0.92, clear: 0.82, slide: 0.09 };
+// Output levels (sample peak). The clear is the loudest effect, a tap sits ~6 dB below it (loudest
+// 100 ms RMS), and there is headroom for several clears overlapping during fast combos. The chime
+// clear is more peaky than the old crackle, so it has a lower peak for about the same loudness.
+const LEVEL = { tap: 0.9, fail: 0.92, clear: 0.62, slide: 0.09 };
 
 // ---------------------------------------------------------------------------------------- tap
 
@@ -247,97 +247,97 @@ export function fail(sr) {
 
 // -------------------------------------------------------------------------------------- clear
 
-export function clear(sr) {
-  const rand = rng(7);
-  const dur = 0.95;
+/** A struck bell/glass partial: rotating oscillator, soft attack, exponential ring-out. */
+function ping(out, sr, at, freq, gain, tau, attack = 0.002) {
+  const i0 = Math.round(at * sr);
+  const w = (2 * Math.PI * freq) / sr, c = Math.cos(w), sn = Math.sin(w);
+  const dec = Math.exp(-1 / (sr * tau)), att = Math.max(1, attack * sr);
+  // rings until it is ~70 dB down, so nothing is ever cut off mid-note
+  const n = Math.min(out.length - i0, Math.ceil(tau * 8 * sr));
+  let x = 1, y = 0, e = gain;
+  for (let i = 0; i < n; i++) {
+    const ny = x * sn + y * c; x = x * c - y * sn; y = ny;
+    const a = i < att ? Math.sin((Math.PI / 2) * (i / att)) : 1;
+    out[i0 + i] += e * y * a * a;
+    e *= dec;
+  }
+}
+
+/** A glassy bell note: the fundamental plus two quieter inharmonic partials that die sooner. */
+function chime(out, sr, at, freq, gain, tau) {
+  ping(out, sr, at, freq, gain, tau);
+  ping(out, sr, at, freq * 2.01, gain * 0.28, tau * 0.45);
+  ping(out, sr, at, freq * 3.9, gain * 0.07, tau * 0.18, 0.001);
+}
+
+// C-major pentatonic, the scale the combo bell climbs through, so a clear and the bell always agree.
+const PENTA = [0, 2, 4, 7, 9];
+const note = (base, step) => base * Math.pow(2, (12 * Math.floor(step / 5) + PENTA[step % 5]) / 12);
+
+/**
+ * A soft, bubbly pop followed by a bright two-note chime and a few glassy tinkles as the pieces
+ * fall, ringing out to silence. It used to be a firework-like crackle cut off hard at 0.93 s,
+ * which read as an explosion; now every part decays on its own and the buffer is long enough to
+ * hold the whole tail. `variant` changes only which tinkles play, so fast clears don't all sound
+ * identical while staying in tune with each other and with the combo bell.
+ */
+export function clear(sr, variant = 0) {
+  const rand = rng(21 + variant * 7);
+  const dur = 1.3;
   const n = Math.floor(sr * dur);
   const out = new Float32Array(n);
 
-  // 1. the crack, and a thin sizzle until the burst lands
-  const crack = noise(Math.floor(sr * 0.012), rand);
-  { let a = 1; const dec = Math.exp(-1 / (sr * 0.0007)); for (let i = 0; i < crack.length; i++) { crack[i] *= a; a *= dec; } }
-  filter(crack, sr, 'hp', 300);
-  filter(crack, sr, 'lp', 5000);
-  filter(crack, sr, 'lp', 5000);
-  mixInto(out, crack, 0, 4.2);
-  const sizzle = noise(Math.floor(sr * 0.075), rand);
-  filter(sizzle, sr, 'bp', 3600, 1.4);
-  filter(sizzle, sr, 'lp', 7000);
-  const sz = dbEnvelope(sizzle.length, sr, [[0, -40], [0.004, 0], [0.06, -2], [0.072, -30]]);
-  for (let i = 0; i < sizzle.length; i++) sizzle[i] *= sz[i];
-  mixInto(out, sizzle, 0, 0.45);
-
-  // 2. the burst: four bands of pink noise, each with its own decay (highs die first).
-  // Everything in the burst is band-limited to ~9.6 kHz; only the crack reaches higher.
-  const body = new Float32Array(n);
-  const T0 = 0.065;
-  const bands = [
-    // [lo, hi, gain, envelope]
-    [90, 400, 0.55, [[T0, -40], [T0 + 0.008, 0], [0.09, -2], [0.12, -10], [0.16, -9], [0.3, -13], [0.45, -19], [0.52, -17], [0.6, -14], [0.64, -22], [0.93, -24]]],
-    [400, 1500, 1.6, [[T0, -40], [T0 + 0.01, 0], [0.09, -5], [0.12, -13], [0.2, -15], [0.3, -17], [0.45, -24], [0.52, -22], [0.6, -19], [0.64, -28], [0.93, -30]]],
-    [1500, 5000, 1.15, [[T0, -40], [T0 + 0.006, 0], [0.1, -3], [0.14, -9], [0.2, -9], [0.3, -11], [0.45, -20], [0.52, -19], [0.6, -17], [0.64, -26], [0.93, -30]]],
-    [5000, 9500, 0.55, [[T0, -40], [T0 + 0.005, 0], [0.1, -4], [0.15, -15], [0.3, -19], [0.45, -32], [0.6, -30], [0.64, -36], [0.93, -44]]],
-  ];
-  for (const [lo, hi, gain, pts] of bands) {
-    const b = pink(n, rand);
-    filter(b, sr, 'hp', lo); filter(b, sr, 'hp', lo);
-    filter(b, sr, 'lp', hi); filter(b, sr, 'lp', hi);
-    const env = dbEnvelope(n, sr, pts);
-    for (let i = 0; i < n; i++) body[i] += b[i] * env[i] * gain;
-  }
-
-  // 3. crackle: many short grains, dense at first and thinning out
-  let g = T0 + 0.003;
-  while (g < 0.9) {
-    const len = Math.floor(sr * (0.0015 + rand() * 0.004));
-    const grain = noise(len, rand);
-    { let a = 1; const dec = Math.exp(-4 / len); for (let i = 0; i < len; i++) { grain[i] *= a; a *= dec; } }
-    filter(grain, sr, 'bp', 600 * Math.pow(12, rand()), 0.8 + rand() * 2);
-    const level = Math.pow(10, (-(g - T0) * 28 - rand() * 10) / 20);
-    mixInto(body, grain, Math.round(g * sr), 2.6 * level);
-    g += 0.010 + rand() * 0.030 + (g - T0) * 0.05;
-  }
-  // a few bigger pops through the tail
-  for (const [at, lv, f] of [[0.19, 0.28, 3000], [0.2, 0.42, 2500], [0.28, 0.45, 6500], [0.47, 0.4, 1800], [0.59, 0.3, 3000], [0.745, 0.2, 1200], [0.85, 0.15, 2200]]) {
-    const len = Math.floor(sr * 0.012);
-    const p = noise(len, rand);
-    { let a = 1; const dec = Math.exp(-1 / (sr * 0.0025)); for (let i = 0; i < len; i++) { p[i] *= a; a *= dec; } }
-    filter(p, sr, 'bp', f, 1.2);
-    mixInto(body, p, Math.round(at * sr), lv * 3);
-  }
-  for (let k = 0; k < 4; k++) filter(body, sr, 'lp', 9600, k % 2 ? 1.31 : 0.54);
-  for (let i = 0; i < n; i++) out[i] += body[i];
-
-  // 4. the low thump that gives it weight (50-80 Hz, fading over ~0.35 s)
-  const t0i = Math.round(T0 * sr), tend = Math.min(n, t0i + Math.round(0.45 * sr));
-  let x = 1, y = 0, c = 1, sn = 0, e = 1;
-  const dec = Math.exp(-1 / (sr * 0.12)), rise = Math.exp(-1 / (sr * 0.012));
-  let up = 1;
-  for (let i = t0i; i < tend; i++) {
-    const k = i - t0i;
-    if ((k & 31) === 0) {
-      const f = 50 + 30 * Math.exp(-k / (sr * 0.05)), w = (2 * Math.PI * f) / sr;
-      c = Math.cos(w); sn = Math.sin(w);
+  // 1. the pop: a sine that drops quickly in pitch (a bubble / cork), over a tiny soft click
+  {
+    const len = Math.floor(sr * 0.09);
+    let ph = 0;
+    for (let i = 0; i < len; i++) {
+      const t = i / sr;
+      ph += (2 * Math.PI * (260 + 700 * Math.exp(-t / 0.012))) / sr;
+      const env = Math.min(1, t / 0.0015) * Math.exp(-t / 0.022);
+      out[i] += 0.75 * env * Math.sin(ph);
     }
-    const ny = x * sn + y * c; x = x * c - y * sn; y = ny;
-    out[i] += 0.14 * y * (1 - up) * e;
-    e *= dec; up *= rise;
+    const tick = noise(Math.floor(sr * 0.01), rand);
+    { let a = 1; const dec = Math.exp(-1 / (sr * 0.0012)); for (let i = 0; i < tick.length; i++) { tick[i] *= a; a *= dec; } }
+    filter(tick, sr, 'bp', 2600, 1.2);
+    mixInto(out, tick, 0, 0.5);
   }
 
-  // 5. shape the whole burst to the original's loudness curve: it starts almost silent, swells to
-  //    its peak around 80 ms, then settles a few dB lower through the tail. (Derived by comparing
-  //    5 ms RMS envelopes of this synth against the reference recording and taking the trend.)
-  const shape = dbEnvelope(n, sr, [[0, -14], [0.02, -10], [0.035, -4], [0.06, -2.5], [0.08, -2],
-    [0.12, -3.5], [0.18, -4.5], [0.25, -3], [0.35, -2], [0.45, -3.5], [0.55, -4], [0.65, -6], [0.8, -5], [0.95, -5]]);
-  for (let i = 0; i < n; i++) out[i] *= shape[i];
+  // 2. the chime: G5 then C6, a rising fourth, the second just behind the first
+  chime(out, sr, 0.012, 783.99, 0.55, 0.3);
+  chime(out, sr, 0.062, 1046.5, 0.5, 0.34);
 
-  // hard stop like the original, with a 6 ms fade to avoid a click
-  const end = Math.round(0.93 * sr), fade = Math.round(0.006 * sr);
-  for (let i = end; i < n; i++) out[i] *= Math.max(0, 1 - (i - end) / fade);
-  normalize(out, 1);
-  saturate(out, 2.1);
+  // 3. tinkles: little high glass notes from the same scale, thinning out like falling pieces
+  let t = 0.1 + rand() * 0.03;
+  let last = -1;
+  for (let k = 0; k < 6; k++) {
+    let step;
+    do { step = 4 + Math.floor(rand() * 5); } while (step === last); // A6 .. G7
+    last = step;
+    const g = 0.2 * Math.exp(-k / 3.2) * (0.75 + rand() * 0.5);
+    chime(out, sr, t, note(1046.5, step), g, 0.09 + rand() * 0.05);
+    t += 0.045 + rand() * 0.05 + k * 0.012;
+  }
+
+  // 4. a breath of shimmer under the tinkles, soft in and soft out
+  {
+    const air = noise(Math.floor(sr * 0.6), rand);
+    filter(air, sr, 'hp', 5000);
+    filter(air, sr, 'lp', 11000);
+    const env = dbEnvelope(air.length, sr, [[0, -60], [0.03, -6], [0.12, 0], [0.35, -18], [0.6, -60]]);
+    for (let i = 0; i < air.length; i++) air[i] *= env[i];
+    mixInto(out, air, Math.round(0.02 * sr), 0.05);
+  }
+
+  // Everything above has already rung down by now; this long raised-cosine fade only guarantees
+  // the last samples are exactly zero, it is never heard as an ending.
+  const f0 = Math.round(0.9 * sr);
+  for (let i = f0; i < n; i++) out[i] *= 0.5 + 0.5 * Math.cos((Math.PI * (i - f0)) / (n - f0));
   return normalize(out, LEVEL.clear);
 }
+
+/** How many versions of the clear sound.js builds and picks from. */
+export const CLEAR_VARIANTS = 3;
 
 // -------------------------------------------------------------------------------------- slide
 
@@ -407,4 +407,4 @@ export const lose = sr => tones(sr, [[392, 0.16], [330, 0.16], [262, 0.16], [196
 export const win = sr => tones(sr, [[523, 0.1], [659, 0.1], [784, 0.1], [1047, 0.3]], 'triangle', 0.5);
 
 /** Every named effect, for sound.play(name). */
-export const SFX = { tap, fail, clear, slide, shuffle, win, lose };
+export const SFX = { tap, fail, slide, shuffle, win, lose };

@@ -4,6 +4,8 @@ if (window.top !== window.self) {
   throw new Error('framed');
 }
 
+// First: puts back progress Safari may have cleared, before anything reads it (see backup.js).
+import './backup.js';
 import { Game } from './game.js';
 import { UI } from './ui.js';
 import { sound } from './sound.js';
@@ -33,6 +35,10 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') report.flush();
 });
 addEventListener('online', () => report.flush());
+
+// A game saved in a browser tab can be cleared by Safari (or WeChat); suggest the Home Screen,
+// once the opening deal has landed.
+setTimeout(() => ui.maybeNudgeKeepSafe(), 2500);
 
 let lastSize = '';
 function fit() {
@@ -89,11 +95,12 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') {
   });
 }
 
-// Debug helpers for testing: ?autoplay (&slides), ?stuck, ?endgame, ?nopowerups
+// Debug helpers for testing: ?autoplay (&slides), ?stuck, ?endgame, ?nopowerups, ?nudge
 // (local test server only; they do nothing on the published site)
 const local = location.hostname === 'localhost';
 const params = local ? new URLSearchParams(location.search) : new URLSearchParams();
 if (params.has('fps')) game.perf = { frames: 0, slow: 0, ours: 0, lastWork: 0, maxWork: 0, sumWork: 0, budget: 1 / 60 };
+if (params.has('nudge')) setTimeout(() => ui.maybeNudgeKeepSafe(true), 3000);
 if (params.has('kinds')) setTimeout(() => game.debugAllKinds(), 1500);
 if (params.has('stuck')) setTimeout(() => game.debugStuck(), 1500);
 if (params.has('endgame')) setTimeout(() => game.debugEndgame(), 1500);
