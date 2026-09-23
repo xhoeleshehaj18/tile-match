@@ -1,12 +1,14 @@
 // The game scene: layout, rendering, input, animation and rules flow (ported from GameScene.swift).
 // Everything is drawn on one canvas from pre-rendered sprites; there is no per-frame text or path drawing.
 
-import { Board, DIRS, RIGHT, DOWN, LEFT, UP, moved, samePos } from './board.js';
+import { Board, DIRS, RIGHT, DOWN, LEFT, UP, moved, samePos, free, withSeed, hashSeed } from './board.js';
 import * as Art from './art.js';
 import { DPR } from './art.js';
 import { sound } from './sound.js';
 import { L } from './i18n.js';
-import { store, Stats, savedMode } from './store.js';
+import { store, Stats, Daily, savedMode } from './store.js';
+import { levelRules, dailyRules, todayKey, CHALLENGE_RULES, arrowOf } from './levels.js';
+import { puzzle } from './puzzle.js';
 import { VERSION } from './version.js';
 import { photos } from './photos.js';
 import * as report from './report.js';
@@ -14,7 +16,7 @@ import * as report from './report.js';
 // Board size per mode. Big was chosen by rendering 11×15 up to 14×20 on phone-sized screens: at
 // 12×17 a tile is still ~30 pt on a standard iPhone (about the size of body-text emoji), and one
 // more column or row is where icons start to blur together and taps land on the neighbour.
-const GRIDS = { levels: [10, 14], challenge: [10, 14], big: [12, 17] };
+const GRIDS = { levels: [10, 14], daily: [10, 14], challenge: [10, 14], big: [12, 17] };
 // ?grid=13x18 on the local test server tries another size for the Big board
 const GRID_TEST = location.hostname === 'localhost' && /^(\d+)x(\d+)$/.exec(new URLSearchParams(location.search).get('grid') ?? '');
 if (GRID_TEST) GRIDS.big = [+GRID_TEST[1], +GRID_TEST[2]];
@@ -37,10 +39,30 @@ const START_SHUFFLES = 1;
 const LEVELS_HINTS = 3;
 const LEVELS_SHUFFLES = 3;
 
+// Combos: the next clear within the window keeps the chain going. At FEVER_AT in a row the board
+// catches fire: the chain can't break, the next FEVER_HINTS clears each light up a pair for free,
+// points double in Challenge, and each clear adds a little more fever time, up to FEVER_MAX in all.
+// Lighting every pair for the whole fever was too generous: she could tap her way through a third
+// of a board without looking.
+const COMBO_WINDOW = 3.5;
+const FEVER_AT = 5;
+const FEVER_TIME = 6;
+const FEVER_MAX = 14;
+const FEVER_HINTS = 3;  // free pairs a fever lights up, then she's on her own
+const FEVER_AGAIN = 8;   // clears after a fever starts before the next one can
+const COMBO_PRIZE = 10;  // every 10 in a row pays a hint
+
+/** What a tile looks like beyond its icon: 0 plain, 1 rock, 2 ice, 3 thick ice, 4 gift. */
+const fxOf = t => (t.stone ? 1 : t.ice === 2 ? 3 : t.ice ? 2 : t.gift ? 4 : 0);
+const clock = sec => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+
 const TAU = Math.PI * 2;
 const rand = (a, b) => a + Math.random() * (b - a);
 const now = () => performance.now() / 1000;
 const snap = v => Math.round(v * DPR) / DPR;
+// someone who has asked their phone for less motion doesn't get the screen shaken or pulled
+const REDUCED_MOTION = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+const shuffledCopy = a => a.map(v => [Math.random(), v]).sort((x, y) => x[0] - y[0]).map(p => p[1]);
 const dirName = d => (d.dc ? (d.dc > 0 ? 'right' : 'left') : d.dr > 0 ? 'down' : 'up');
 
 // How long a shattered piece lives, and how long it stays solid before fading out.
@@ -78,6 +100,9 @@ const WOBBLE = [[0.05, 0.16], [0.08, -0.11], [0.06, 0.05], [0.05, 0]];
 const PRESS = [[0.05, 0.9], [0.1, 1]];
 const POP = [[0.07, 1.15], [0.12, 1]];
 const GRANT_POP = [[0.12, 1.2], [0.15, 1]];
+// a frozen or wrapped tile's covering landing during its twist's entrance
+const FX_POP = [[0.1, 1.18], [0.15, 1]];
+const CONFETTI = ['#FF4FB8', '#FFE14A', '#6FD1FF', '#8BE36B', '#FF8A3D'];
 
 // ---------------------------------------------------------------- tweens
 
@@ -134,6 +159,12 @@ export class Game {
     this.particles = [];
     this.particleOut = { x: 0, y: 0, rot: 0, scale: 1, alpha: 1 };
     this.frags = [];
+    this.overlay = [];
+    this.tints = [];
+    this.quakes = [];
+    this.frostFx = null;
+    this.dip = null;
+    this.stageCss = '';
     this.jx = 0;
     this.jy = 0;
     this.joltT0 = -1;
@@ -160,6 +191,19 @@ export class Game {
     this.lostPending = false;
     this.combo = 0;
     this.lastMatch = -10;
+    this.bestCombo = 0;
+    this.feverT0 = 0;
+    this.feverUntil = 0;
+    this.feverHints = 0;
+    this.nextFever = FEVER_AT;
+    this.feverFx = null;
+    this.rules = CHALLENGE_RULES;
+    this.dailyDate = todayKey();
+    this.playTime = 0;
+    this.clockOn = false;
+    this.infoKey = '';
+    this.infoSprite = null;
+    this.dailyDot = false;
     this.lastSparkle = { x: 0, y: 0 };
     this.tileAlpha = 1;
     this.toastSprite = null;
@@ -187,7 +231,7 @@ export class Game {
 
   get cols() { return GRIDS[this.mode][0]; }
   get rows() { return GRIDS[this.mode][1]; }
-  /** Levels and Big can't be lost: power-ups refill with a photo break and a stuck board reshuffles. */
+  /** Levels, Daily and Big can't be lost: power-ups refill with a photo break and a stuck board reshuffles. */
   get relaxed() { return this.mode !== 'challenge'; }
 
   // ------------------------------------------------------------ state
@@ -201,6 +245,12 @@ export class Game {
     this.secondChanceUsed = store.bool(this.key('secondChanceUsed'));
     this.score = store.int(this.key('score'));
     this.level = Math.max(1, store.int(this.key('level'), 1));
+    // The level this save was on when the twists arrived. An unfinished board then still counts
+    // as the old game, so the tour of the new twists starts with the level after it.
+    if ((this.mode === 'levels' || this.mode === 'big') && localStorage.getItem(this.key('since')) === null) {
+      store.set(this.key('since'), this.level + (localStorage.getItem(this.key('board')) && this.level > 5 ? 1 : 0));
+    }
+    this.since = store.int(this.key('since'), 1);
     this.lostPending = false;
     this.bestAtStart = Stats.best;
   }
@@ -216,20 +266,52 @@ export class Game {
   saveBoard() {
     if (this.board.isEmpty) {
       store.remove(this.key('board'));
+      store.remove(this.key('boardFx'));
     } else {
       store.set(this.key('board'), this.board.snapshot());
+      const fx = this.board.fxSnapshot();
+      if (fx) store.set(this.key('boardFx'), fx); else store.remove(this.key('boardFx'));
       store.set(this.key('boardTotal'), this.levelTileTotal);
+      store.set(this.key('time'), Math.round(this.playTime));
+      store.set(this.key('bestCombo'), this.bestCombo);
+      if (this.mode === 'daily') store.set('daily.date', this.dailyDate);
     }
   }
 
   /** Picks up a game that was in progress when the page was closed. */
   restoreBoard() {
-    const saved = Board.fromSnapshot(this.cols, this.rows, store.json(this.key('board')));
+    // a daily board left over from another day is gone: today has its own
+    if (this.mode === 'daily' && localStorage.getItem('daily.date') !== todayKey()) return false;
+    const fx = localStorage.getItem(this.key('boardFx')) ?? '';
+    const saved = Board.fromSnapshot(this.cols, this.rows, store.json(this.key('board')), fx);
     if (!saved) return false;
     this.board = saved;
     this.levelTileTotal = Math.max(store.int(this.key('boardTotal')), saved.tileCount);
+    this.dailyDate = todayKey();
+    this.rules = this.makeRules();
+    this.playTime = store.int(this.key('time'));
+    this.clockOn = this.playTime > 0;
+    this.bestCombo = store.int(this.key('bestCombo'));
+    this.resetCombo();
+    this.updateScore(false);
     this.after(1.2, () => this.checkBoard(), 'check');
     return true;
+  }
+
+  /** The recipe for the board being played: twists, clock and combo goal. */
+  makeRules() {
+    if (this.mode === 'challenge') return CHALLENGE_RULES;
+    if (this.mode === 'daily') return dailyRules(this.dailyDate);
+    return levelRules(this.level, this.mode === 'big', this.since);
+  }
+
+  resetCombo() {
+    this.combo = 0;
+    this.lastMatch = -10;
+    this.feverUntil = 0;
+    this.nextFever = FEVER_AT;
+    this.comboFx = null;
+    this.feverFx = null;
   }
 
   // ------------------------------------------------------------ timers
@@ -295,12 +377,24 @@ export class Game {
     this.tileSprite = Art.tile(this.tileW, this.tileH, 'normal');
     this.tileLitSprite = Art.tile(this.tileW, this.tileH, 'lit');
     this.tileFlashSprite = Art.tileFlash(this.tileW, this.tileH);
+    this.stoneSprite = Art.tile(this.tileW, this.tileH, 'stone');
+    this.ice1Sprite = Art.iceOverlay(this.tileW, this.tileH, 1);
+    this.ice2Sprite = Art.iceOverlay(this.tileW, this.tileH, 2);
     this.emojiSize = cell * 0.7;
     this.emojiSprites = KINDS.map(k => Art.emoji(k, this.emojiSize));
+    this.giftSprite = Art.emoji('🎁', this.emojiSize);
     this.leafSprite = Art.leaf(cell * 0.42);
     this.sparkleSprite = Art.sparkle(cell * 0.4);
     this.glowSprite = Art.glow(cell * 1.2);
     this.ringSprite = Art.ring(cell * 1.1);
+    this.snowSprite = Art.snowflake(cell * 0.6);
+    this.frostScreenSprite = null; // drawn the first time a board has ice, at this screen's size
+    this.dustSprite = Art.dust(cell * 0.9);
+    this.confettiSprites = CONFETTI.map(c => Art.confetti(cell * 0.24, c));
+    this.cannonConfetti = CONFETTI.map(c => Art.confetti(cell * 0.4, c));
+    this.streakSprite = Art.streak(cell * 2.4, cell * 0.12);
+    this.speedLineSprite = Art.streak(H * 0.22, Math.max(2, cell * 0.08));
+    this.bigArrowSprite = Art.arrow(cell * 2.4);
     this.fragSprites = new Map();
     this.frags = [];
 
@@ -327,6 +421,8 @@ export class Game {
     const topY = Math.max(safe.top, 14 * s) + 34 * s;
     this.topY = topY;
     this.gear = { x: 40 * s, y: topY, sprite: Art.gearButton(54 * s), scale: 1, pressT0: -1 };
+    this.dailyBtn = { x: 104 * s, y: topY, sprite: Art.iconButton(54 * s, '📅'), pressT0: -1 };
+    this.dotSprite = Art.dot(18 * s);
     const bW = 114 * s, bH = 86 * s;
     const buttonY = H - (safe.bottom * 0.5 + (bottomH - safe.bottom * 0.5) / 2);
     this.hintBtn = { x: W * 0.338, y: buttonY, w: bW, h: bH, sprite: Art.powerButton(bW, bH, 'hint', s), alpha: 1, pressT0: -1, popT0: -1, attention: false, attT0: 0 };
@@ -340,6 +436,9 @@ export class Game {
     this.bestCanvas = null;
     this.bestText = null;
     this.comboCanvas = null;
+    this.infoKey = '';
+    this.infoCanvas = null;
+    this.feverCanvas = null;
 
     this.promoteSprites();
     const first = !this.built;
@@ -349,6 +448,7 @@ export class Game {
     this.updateScore(false);
     this.particles = [];
     this.comboFx = null;
+    this.feverFx = null;
     this.toastSprite = null;
     this.hintArrow = null;
 
@@ -373,7 +473,8 @@ export class Game {
     if (typeof createImageBitmap !== 'function') return;
     const gen = (this.spriteGen = (this.spriteGen ?? 0) + 1);
     const lift = c => createImageBitmap(c).then(b => { b.w = c.w; b.h = c.h; return b; });
-    const fields = ['bg', 'tileSprite', 'tileLitSprite', 'tileFlashSprite', 'dashes', 'girlSprite', 'leafSprite', 'sparkleSprite', 'glowSprite', 'ringSprite'];
+    const fields = ['bg', 'tileSprite', 'tileLitSprite', 'tileFlashSprite', 'dashes', 'girlSprite', 'leafSprite', 'sparkleSprite', 'glowSprite', 'ringSprite',
+      'stoneSprite', 'ice1Sprite', 'ice2Sprite', 'giftSprite'];
     Promise.all([...fields.map(f => lift(this[f])), ...this.emojiSprites.map(lift)])
       .then(list => {
         if (gen !== this.spriteGen) return; // a newer layout replaced these
@@ -414,8 +515,10 @@ export class Game {
     const s = this.s;
     const levels = this.relaxed;
     this.scoreSprite = levels
-      ? Art.pill(L.level(this.level), 38 * s, { reuse: this.scoreSprite })
+      ? Art.pill(this.mode === 'daily' ? L.dailyPill() : L.level(this.level), 38 * s, { reuse: this.scoreSprite })
       : Art.scorePill(String(this.score), 38 * s, this.scoreSprite);
+    this.dailyDot = Daily.best(todayKey()) === 0;
+    this.updateInfo();
     if (levels) {
       this.bestSprite = null;
     } else {
@@ -432,6 +535,22 @@ export class Game {
 
   refreshLanguage() {
     this.updateScore(false);
+  }
+
+  /** The clock and combo goal under the level: "⏱ 3:12   ⚡ 4/8   ↓". Redrawn only when it changes. */
+  updateInfo() {
+    const r = this.rules;
+    if (!this.relaxed || !r.par || !this.built) { this.infoSprite = null; this.infoKey = ''; return; }
+    const left = Math.max(0, Math.ceil(r.par - this.playTime));
+    const done = this.bestCombo >= r.comboGoal;
+    let text = `⏱ ${clock(left)}   ⚡ ${Math.min(this.bestCombo, r.comboGoal)}/${r.comboGoal}${done ? ' ✓' : ''}`;
+    if (r.gravity) text += `   ${arrowOf(r.gravity)}`;
+    const color = left === 0 ? '#A0A0A0' : left <= 20 ? '#FF9A6B' : '#FFFFFF';
+    const key = text + color;
+    if (key === this.infoKey) return;
+    this.infoKey = key;
+    this.infoCanvas = Art.pill(text, 25 * this.s, { color, bg: 'rgba(13,13,13,0.75)', fontScale: 0.62, radius: 0.39, pad: 0.8, reuse: this.infoCanvas });
+    this.infoSprite = this.infoCanvas;
   }
 
   // ------------------------------------------------------------ levels
@@ -458,15 +577,25 @@ export class Game {
     this.peerIds = [];
     this.hinted = [];
     this.hintArrow = null;
-    this.combo = 0;
+    this.resetCombo();
+    this.bestCombo = 0;
+    this.playTime = 0;
+    this.clockOn = false;
+    this.dailyDate = todayKey();
+    const r = (this.rules = this.makeRules());
     const size = { cols: this.cols, rows: this.rows };
+    const twists = { stones: r.stones, ice: r.ice, ice2: r.ice2, gifts: r.gifts };
     this.board = this.mode === 'challenge'
       ? Board.generate({ ...size, level: 1, kindCount: BASE_KINDS, share: TOUCHING_SHARE, kinds: BASE_KINDS })
       : this.mode === 'big'
         // 102 pairs over 44 kinds and up: most icons come in two pairs, a few in three
-        ? Board.generate({ ...size, level: this.level, kindCount: KINDS.length, kinds: 44 + (this.level - 1) * 2 })
-        : Board.generate({ ...size, level: this.level, kindCount: BASE_KINDS });
+        ? Board.generate({ ...size, level: this.level, kindCount: KINDS.length, kinds: 44 + (this.level - 1) * 2, ...twists })
+        : this.mode === 'daily'
+          // dealt from the date, so it's the same board on every phone today
+          ? withSeed(hashSeed('board' + this.dailyDate), () => Board.generate({ ...size, level: 20, kindCount: BASE_KINDS, kinds: 44, share: r.share, ...twists }))
+          : Board.generate({ ...size, level: this.level, kindCount: BASE_KINDS, ...twists });
     this.levelTileTotal = this.board.tileCount;
+    this.updateScore(false);
     this.saveBoard();
     this.anim.cancel(this.girl);
     this.girl.x = this.girlHomeX;
@@ -474,6 +603,7 @@ export class Game {
     this.anim.cancel(this, 'tileAlpha');
     this.tileAlpha = 1;
     this.rebuildTiles(true);
+    this.announceLevel();
   }
 
   /** Part of the board cleared and the game not over: starting again would throw this away. */
@@ -483,6 +613,21 @@ export class Game {
 
   restartLevel() { this.startLevel(); }
   nextLevel() { this.startLevel(); }
+
+  /** A new twist gets its own card the first time; gravity always says which way it pulls.
+   *  Both wait for the twists' entrance to play out first. */
+  announceLevel() {
+    const r = this.rules;
+    const wait = this.entranceLen;
+    if (r.intro && (this.mode === 'levels' || this.mode === 'big') && store.int(this.key('intro')) < this.level) {
+      store.set(this.key('intro'), this.level);
+      this.after(0.8 + wait, () => this.ui.showIntro(r.intro), 'intro');
+    } else if (this.mode === 'daily') {
+      this.after(0.7 + wait, () => this.toast(L.dailyToast(r.theme)), 'intro');
+    } else if (r.gravity) {
+      this.after(0.7 + wait, () => this.toast(L.gravityToast(arrowOf(r.gravity))), 'intro');
+    }
+  }
 
   /** Switches between Levels, Challenge and Big. The game being left stays saved and resumes when you come back. */
   switchMode(mode) {
@@ -501,7 +646,9 @@ export class Game {
     this.peerIds = [];
     this.hinted = [];
     this.hintArrow = null;
-    this.combo = 0;
+    this.resetCombo();
+    this.cancelTimer('intro');
+    this.cancelTimer('feverHint');
     this.board = new Board(this.cols, this.rows);
     // a different grid means a different cell size: every sprite and the tile layer are rebuilt
     if (resized) this.layout(this.W, this.H, this.safe);
@@ -523,8 +670,8 @@ export class Game {
 
   makeTile(t, p) {
     const pt = this.point(p);
-    return { id: t.id, kind: t.kind, x: pt.x, y: pt.y, rot: 0, scale: 1, alpha: 1, z: 0, lit: false,
-      shake: false, shakeT0: 0, tapT0: -1, flashT0: -1, pulse: false, pulseT0: 0, wobbleT0: -1, gone: false };
+    return { id: t.id, kind: t.kind, fx: fxOf(t), x: pt.x, y: pt.y, rot: 0, scale: 1, alpha: 1, z: 0, lit: false,
+      shake: false, shakeT0: 0, tapT0: -1, flashT0: -1, pulse: false, pulseT0: 0, wobbleT0: -1, gone: false, fxIn: 0, home: pt };
   }
 
   rebuildTiles(animated) {
@@ -533,6 +680,12 @@ export class Game {
     this.nodes.clear();
     this.particles = [];
     this.frags = [];
+    this.overlay = [];
+    this.tints = [];
+    this.frostFx = null;
+    this.dip = null;
+    this.entranceLen = 0;
+    this.entranceGen = (this.entranceGen ?? 0) + 1;
     for (const p of this.board.occupied()) {
       const n = this.makeTile(this.board.get(p), p);
       this.tiles.push(n);
@@ -549,8 +702,349 @@ export class Game {
         this.anim.to(n, { alpha: 1 }, 0.15, { delay, key: 'alpha' });
       }
     }
-    if (animated) this.busyUntil = now() + 0.5;
+    if (animated) {
+      this.busyUntil = now() + 0.5;
+      this.twistEntrance();
+    }
     this.warmFragPieces();
+  }
+
+  // ------------------------------------------------------------ twist entrances
+
+  /**
+   * Each twist on the board makes an entrance as the tiles finish dealing in: rocks drop onto the
+   * board, ice frosts over it, presents pop up in confetti and gravity sweeps across the way it
+   * pulls. With more than one on a board they take turns, a beat apart. Sets `entranceLen`, the
+   * seconds it adds, so the twist's card can wait for it.
+   */
+  twistEntrance() {
+    const stones = [], ice = [], gifts = [];
+    for (const n of this.tiles) {
+      if (n.fx === 1) stones.push(n);
+      else if (n.fx === 2 || n.fx === 3) ice.push(n);
+      else if (n.fx === 4) gifts.push(n);
+    }
+    const gravity = this.rules.gravity;
+    // each one starts while the one before is finishing, so even all four stay under two seconds
+    const first = 0.7;
+    let at = first, end = first;
+    const next = (fn, ...args) => { end = Math.max(end, fn.call(this, ...args, at)); at = (at + end) / 2 + 0.1; };
+    if (stones.length) next(this.rocksFall, stones);
+    if (ice.length) next(this.frostOver, ice);
+    if (gifts.length) next(this.giftsPop, gifts);
+    // the tiles lean with gravity, so they have to have finished dealing in
+    if (gravity) { at = Math.max(at, 0.85); next(this.gravitySweep, gravity); }
+    if (end === first) return;
+    this.entranceLen = end - first + 0.2;
+    this.busyUntil = Math.max(this.busyUntil, now() + end);
+  }
+
+  /** Runs `fn` `sec` from now, unless the board has been dealt again by then. */
+  entranceStep(sec, fn) {
+    const gen = this.entranceGen;
+    this.after(sec, () => { if (gen === this.entranceGen) fn(); });
+  }
+
+  /**
+   * Rocks fall out of the sky, from above the top of the screen, and each one lands with a thud, a
+   * puff of dust, a faint tick and a knock that shakes the whole screen, the last one hardest. The
+   * world dims to a dusty brown while they fall, and dust drifts up along the bottom afterwards.
+   * Returns when the last lands.
+   */
+  rocksFall(nodes, at) {
+    const cell = this.cell;
+    nodes.sort((a, b) => a.home.y - b.home.y || a.home.x - b.home.x);
+    const gap = Math.min(0.08, 0.6 / nodes.length);
+    let last = at;
+    nodes.forEach((n, i) => {
+      const home = n.home;
+      const delay = at + i * gap;
+      // further to fall for the lower rocks, but they all fall at the same pace
+      const fall = 0.3 + 0.2 * (home.y / this.H);
+      last = Math.max(last, delay + fall);
+      const final = i === nodes.length - 1;
+      this.anim.cancel(n);
+      n.x = home.x + rand(-0.4, 0.4) * cell;
+      n.y = -cell * rand(0.6, 1.8);
+      n.rot = rand(-1.2, 1.2);
+      n.scale = 1.35;
+      n.alpha = 0;
+      this.anim.to(n, { alpha: 1 }, 0.02, { delay, key: 'alpha' });
+      // the landing hangs off the fall itself, so the dust can't come early on a slow phone
+      this.anim.to(n, { x: home.x, y: home.y, rot: 0, scale: 1 }, fall, { ease: 'in', delay, key: 'move', done: () => {
+        for (let k = 0; k < (final ? 7 : 4); k++) this.puff(home.x + rand(-0.5, 0.5) * cell, home.y + cell * 0.35);
+        this.jolt(final ? 5 : 2);
+        this.quake(final ? 7 : 2.5);
+        sound.tick(final ? 1 : 0.3);
+        // every rock thuds, but only every few out loud, or it drums
+        if (i % 3 === 0 || final) sound.play('thud', { gain: final ? 1 : 0.6, rate: rand(0.9, 1.1) });
+        if (final) this.dustDrift();
+      } });
+    });
+    this.tint('70,45,20', at, last - at + 0.6, 0.16);
+    return last;
+  }
+
+  puff(x, y) {
+    const cell = this.cell;
+    const vx = rand(-1, 1) * cell, vy = -rand(0.1, 0.5) * cell, s0 = rand(0.4, 0.7);
+    this.addParticle(this.dustSprite, (a, o) => {
+      const k = EASE.out(Math.min(1, a / 0.5));
+      o.x = x + vx * k; o.y = y + vy * k; o.rot = 0; o.scale = s0 + 0.5 * k;
+      o.alpha = 0.8 * (1 - a / 0.5);
+      return true;
+    }, 0.5);
+  }
+
+  /** The dust the rocks kicked up, rising slowly across the whole width of the screen. */
+  dustDrift() {
+    const b = this.boardRect, cell = this.cell;
+    for (let i = 0; i < 16; i++) {
+      const x0 = (i + rand(0, 1)) / 16 * this.W, y0 = b.y + b.h + rand(-0.5, 0.5) * cell;
+      const rise = rand(1.5, 3.5) * cell, drift = rand(-1, 1) * cell, s0 = rand(1.4, 2.2), life = rand(1, 1.5);
+      this.addOverlay(this.dustSprite, (a, o) => {
+        const k = EASE.out(a / life);
+        o.x = x0 + drift * k; o.y = y0 - rise * k; o.rot = 0; o.scale = s0 * (1 + 0.6 * k);
+        o.alpha = 0.45 * (a < 0.15 ? a / 0.15 : 1 - k);
+        return true;
+      }, life);
+    }
+  }
+
+  /**
+   * The whole screen frosts over like a cold window: fog and ferns of ice grow in from every edge,
+   * the colour goes cold, snow falls from the sky, and the board's ice forms top to bottom under a
+   * patter of faint ticks. Then the frost melts back off the screen. Returns when the last tile has frozen.
+   */
+  frostOver(nodes, at) {
+    const b = this.boardRect, H = this.H;
+    const sweep = 0.55;
+    this.frostScreenSprite ??= Art.frostScreen(this.W, H, this.s);
+    this.frostFx = { t0: now() + at, dur: 2 };
+    this.tint('150,205,255', at, 2, 0.2);
+    for (const n of nodes) {
+      n.fxIn = now() + at + 0.2 + sweep * ((n.home.y - b.y) / b.h) + rand(0, 0.06);
+      n.animT = Math.max(n.animT ?? 0, n.fxIn + 0.3);
+      this.spawnSparkle(n.home.x, n.home.y, n.fxIn - now());
+    }
+    for (let i = 0; i < 46; i++) {
+      const x0 = rand(0, this.W), y0 = rand(-0.12, 0.35) * H;
+      const drift = rand(-1.2, 1.2) * this.cell, fallBy = rand(0.45, 0.8) * H, spin = rand(-2, 2), sc = rand(0.5, 1.3);
+      const delay = at + rand(0, 0.7), dur = rand(1.6, 2.3);
+      this.addOverlay(this.snowSprite, (a, o) => {
+        const k = a / dur;
+        o.x = x0 + drift * Math.sin(k * 4 + x0); o.y = y0 + fallBy * k; o.rot = spin * a; o.scale = sc;
+        o.alpha = k < 0.15 ? k / 0.15 : k > 0.7 ? (1 - k) / 0.3 : 1;
+        return true;
+      }, dur, delay);
+    }
+    this.entranceStep(at, () => {
+      sound.play('frost');
+      // one tick for each band of the board freezing, then a slightly firmer one as it sets
+      sound.ticks([[200, 0.2], [310, 0.2], [410, 0.25], [500, 0.25], [590, 0.3], [800, 0.5]]);
+    });
+    return at + 0.2 + sweep + 0.06 + 0.25;
+  }
+
+  /**
+   * Two confetti cannons fire from the bottom corners of the screen, the confetti tumbling down over
+   * everything, the light warms, and the presents pop up one by one. Two firm ticks for the cannons,
+   * then light ones for the presents. Returns when the last present is up.
+   */
+  giftsPop(nodes, at) {
+    const W = this.W, H = this.H, cell = this.cell;
+    for (const side of [-1, 1]) {
+      const x0 = side < 0 ? -cell * 0.3 : W + cell * 0.3, y0 = H * 0.92;
+      for (let i = 0; i < 50; i++) {
+        const sprite = this.cannonConfetti[i % this.cannonConfetti.length];
+        // aimed up and in, toward the far side of the sky
+        const ang = -Math.PI / 2 - side * rand(0.2, 0.6), speed = rand(2, 3.4) * H;
+        const vx = Math.cos(ang) * speed, vy = Math.sin(ang) * speed;
+        const tau = 0.28, fallSpeed = rand(0.1, 0.18) * H, flip = rand(5, 11), ph = rand(0, TAU), spin = rand(-4, 4);
+        const delay = at + (side > 0 ? 0.06 : 0) + rand(0, 0.05), life = rand(1.8, 2.4), sc = rand(0.8, 1.3);
+        this.addOverlay(sprite, (a, o) => {
+          // shot out against the air, which slows it until it just drifts down, fluttering
+          const d = tau * (1 - Math.exp(-a / tau));
+          o.x = x0 + vx * d + Math.sin(a * 3 + ph) * cell * 0.4;
+          o.y = y0 + vy * d + fallSpeed * (a - d);
+          o.rot = ph + spin * a;
+          o.scale = sc * (0.3 + 0.7 * Math.abs(Math.cos(a * flip + ph)));
+          o.alpha = a > life - 0.4 ? (life - a) / 0.4 : 1;
+          return true;
+        }, life, delay);
+      }
+    }
+    this.tint('255,196,120', at, 1.3, 0.12);
+    const pops = at + 0.15;
+    const spread = Math.min(0.5, 0.03 * nodes.length);
+    for (const n of shuffledCopy(nodes)) {
+      const delay = pops + rand(0, spread);
+      n.fxIn = now() + delay;
+      n.animT = Math.max(n.animT ?? 0, n.fxIn + 0.3);
+      for (let k = 0; k < 4; k++) {
+        const sprite = this.confettiSprites[Math.floor(rand(0, this.confettiSprites.length))];
+        const ang = rand(-Math.PI * 0.9, -Math.PI * 0.1), speed = rand(1.2, 2.2) * cell;
+        const vx = Math.cos(ang) * speed, vy = Math.sin(ang) * speed, spin = rand(-10, 10);
+        this.addParticle(sprite, (a, o) => {
+          o.x = n.home.x + vx * a; o.y = n.home.y + vy * a + 3 * cell * a * a; o.rot = spin * a; o.scale = 1;
+          o.alpha = a < 0.4 ? 1 : Math.max(0, 1 - (a - 0.4) / 0.3);
+          return true;
+        }, 0.7, delay);
+      }
+    }
+    this.entranceStep(at, () => {
+      sound.play('giftpop');
+      sound.ticks([[0, 0.7], [60, 0.7], [220, 0.25], [300, 0.25], [380, 0.3], [460, 0.35]]);
+    });
+    return pops + spread + 0.25;
+  }
+
+  /**
+   * Gravity takes hold of everything: the screen dims, speed lines and a big arrow rush from the top
+   * of the sky to the bottom, the whole screen is pulled down and springs back, and every loose tile
+   * leans with it. Ticks quicken into the pull and land with it. Returns when it has settled.
+   */
+  gravitySweep(d, at) {
+    const W = this.W, H = this.H, cell = this.cell;
+    const rot = Math.atan2(d.dr, d.dc);
+    const dur = 0.8;
+    this.tint('30,40,80', at, 1.1, 0.16);
+    this.addOverlay(this.bigArrowSprite, (a, o) => {
+      const k = a / dur;
+      const off = (EASE.inOut(k) - 0.5) * 0.75;
+      o.x = W / 2 + d.dc * off * W; o.y = H / 2 + d.dr * off * H; o.rot = rot; o.scale = 1.3;
+      o.alpha = k < 0.2 ? k / 0.2 : k > 0.75 ? (1 - k) / 0.25 : 1;
+      return true;
+    }, dur, at);
+    const span = d.dc ? W : H, len = this.speedLineSprite.w;
+    for (let i = 0; i < 32; i++) {
+      // a line running the length of the screen, the way gravity pulls
+      const across = rand(0, d.dc ? H : W);
+      const delay = at + rand(0, 0.45), life = rand(0.3, 0.45), sc = rand(0.7, 1.2);
+      this.addOverlay(this.speedLineSprite, (a, o) => {
+        const along = -len + (span + 2 * len) * (a / life);
+        const pos = d.dc > 0 || d.dr > 0 ? along : span - along;
+        o.x = d.dc ? pos : across; o.y = d.dc ? across : pos; o.rot = rot; o.scale = sc;
+        o.alpha = 0.7 * Math.sin(Math.PI * a / life);
+        return true;
+      }, life, delay);
+    }
+    this.entranceStep(at, () => {
+      sound.play('whoosh');
+      sound.ticks([[0, 0.15], [110, 0.2], [175, 0.3], [215, 0.9], [560, 0.2]]);
+    });
+    this.dip = { t0: now() + at + 0.2, amp: 10 * this.s, d };
+    this.entranceStep(at + 0.2, () => {
+      for (const n of this.tiles) {
+        if (n.fx === 1 || n.fx === 2 || n.fx === 3) continue;
+        // a tile cleared or moved since the deal is left alone
+        const p = this.cellAt(n.home);
+        if (n.gone || !p || this.node(p) !== n || n.x !== n.home.x || n.y !== n.home.y) continue;
+        const home = n.home;
+        const lean = cell * 0.22;
+        this.anim.to(n, { x: home.x + d.dc * lean, y: home.y + d.dr * lean }, 0.14, {
+          ease: 'out', key: 'move',
+          done: () => this.anim.to(n, home, 0.35, { ease: 'out', key: 'move' }),
+        });
+      }
+    });
+    return at + dur;
+  }
+
+  // ------------------------------------------------------------ whole-screen effects
+
+  /** A colour wash over the whole screen ('r,g,b'), rising to `peak` and fading, `at` seconds from now. */
+  tint(rgb, at, dur, peak) { this.tints.push({ rgb, t0: now() + at, dur, peak }); }
+
+  /** A knock that shakes the whole screen, `amp` points at its strongest. */
+  quake(amp) { this.quakes.push({ t0: now(), amp: amp * this.s, ph: rand(0, TAU) }); }
+
+  /** Like addParticle, but drawn over everything on the screen, the HUD included. */
+  addOverlay(sprite, fn, dur, delay = 0) { this.overlay.push({ sprite, fn, t0: now() + delay, dur }); }
+
+  /**
+   * The screen shakes for a rock landing and is pulled down for gravity by moving the canvas element
+   * itself, so the scenery and the HUD go with the board. It is scaled up just enough to cover the
+   * edge the move would uncover, and left alone for anyone who asks their phone for less motion.
+   */
+  moveStage(t) {
+    let x = 0, y = 0;
+    if (this.quakes.length) {
+      let alive = 0;
+      for (const q of this.quakes) {
+        const a = t - q.t0;
+        if (a > 0.45) continue;
+        this.quakes[alive++] = q;
+        const k = q.amp * Math.exp(-a / 0.09);
+        x += k * Math.sin(a * TAU * 19 + q.ph);
+        y += k * Math.cos(a * TAU * 15 + q.ph);
+      }
+      this.quakes.length = alive;
+    }
+    if (this.dip) {
+      const a = t - this.dip.t0;
+      if (a > 1.1) this.dip = null;
+      else if (a > 0) {
+        const k = a < 0.14 ? EASE.out(a / 0.14) : Math.exp(-(a - 0.14) / 0.2) * Math.cos((a - 0.14) * TAU * 1.4);
+        x += this.dip.d.dc * this.dip.amp * k;
+        y += this.dip.d.dr * this.dip.amp * k;
+      }
+    }
+    let css = '';
+    if (!REDUCED_MOTION && (Math.abs(x) > 0.05 || Math.abs(y) > 0.05)) {
+      const cover = 1 + 2.2 * Math.max(Math.abs(x) / this.W, Math.abs(y) / this.H);
+      css = `translate3d(${x.toFixed(1)}px,${y.toFixed(1)}px,0) scale(${cover.toFixed(4)})`;
+    }
+    if (css !== this.stageCss) {
+      this.canvas.style.transform = css;
+      this.stageCss = css;
+    }
+  }
+
+  /** The tints, the frost and the overlay particles, over everything else. */
+  drawScreenFx(t) {
+    const ctx = this.ctx;
+    if (this.tints.length) {
+      let alive = 0;
+      for (const w of this.tints) {
+        const a = t - w.t0;
+        if (a > w.dur) continue;
+        this.tints[alive++] = w;
+        if (a <= 0) continue;
+        const k = a < 0.3 ? a / 0.3 : a > w.dur - 0.5 ? (w.dur - a) / 0.5 : 1;
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = `rgba(${w.rgb},${(w.peak * k).toFixed(3)})`;
+        ctx.fillRect(0, 0, this.W, this.H);
+      }
+      this.tints.length = alive;
+    }
+    if (this.frostFx) {
+      const a = t - this.frostFx.t0, dur = this.frostFx.dur;
+      if (a > dur) this.frostFx = null;
+      else if (a > 0) {
+        // creeps in from the edges (scaled down onto the screen), then melts back out
+        const grow = a < 0.5 ? EASE.out(a / 0.5) : 1;
+        const melt = a > dur - 0.7 ? (dur - a) / 0.7 : 1;
+        const sc = 1.14 - 0.14 * grow + 0.05 * (1 - melt);
+        const img = this.frostScreenSprite;
+        ctx.globalAlpha = grow * melt;
+        ctx.setTransform(sc * DPR, 0, 0, sc * DPR, (this.W / 2) * (1 - sc) * DPR, (this.H / 2) * (1 - sc) * DPR);
+        ctx.drawImage(img, 0, 0, this.W, this.H);
+        ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      }
+    }
+    if (this.overlay.length) {
+      let alive = 0;
+      const o = this.particleOut;
+      for (const p of this.overlay) {
+        const a = t - p.t0;
+        if (a > p.dur) continue;
+        this.overlay[alive++] = p;
+        if (a >= 0 && p.fn(a, o)) this.drawAt(p.sprite, o.x, o.y, o.rot, o.scale, o.alpha);
+      }
+      this.overlay.length = alive;
+    }
+    ctx.globalAlpha = 1;
   }
 
   /** Replays the opening deal as the splash screen lifts, unless she is in the middle of something. */
@@ -628,12 +1122,25 @@ export class Game {
       this.ui.openSettings();
       return;
     }
+    if (this.hit(this.dailyBtn, pt, gearSize + 12 * this.s, gearSize + 16 * this.s)) {
+      this.dailyBtn.pressT0 = now();
+      sound.play('tap');
+      this.ui.openDaily();
+      return;
+    }
     if (this.busy) return;
     if (this.hit(this.hintBtn, pt)) { this.hintBtn.pressT0 = now(); this.useHint(); return; }
     if (this.hit(this.shuffleBtn, pt)) { this.shuffleBtn.pressT0 = now(); this.useShuffle(); return; }
 
     const p = this.cellAt(pt);
-    if (p && this.board.get(p)) {
+    if (p && this.board.get(p) && !free(this.board.get(p))) {
+      // rocks, ice and gifts can't be picked up: a shake says so
+      this.clearSelection();
+      this.pendingPair = null;
+      this.wobble(this.node(p));
+      sound.play('fail', { gain: 0.5 });
+      sound.buzz(8);
+    } else if (p && this.board.get(p)) {
       this.touchOrigin = p;
       this.touchStart = pt;
       this.pressTile(p);
@@ -650,6 +1157,7 @@ export class Game {
    * line with a different one. Lighting is still instant, so rapid tapping feels exactly the same.
    */
   pressTile(p) {
+    this.clockOn = true;
     this.clearHint();
     const prev = this.selected;
     let pair = null;
@@ -813,7 +1321,8 @@ export class Game {
     if (!t) return;
     const t0 = now();
     for (const q of this.board.occupied()) {
-      if (this.board.get(q).kind !== t.kind) continue;
+      const o = this.board.get(q);
+      if (o.kind !== t.kind || !free(o)) continue;
       const n = this.node(q);
       if (!n) continue;
       n.lit = true;
@@ -956,20 +1465,37 @@ export class Game {
     this.board.set(b, null);
     this.nodes.delete(ta.id);
     this.nodes.delete(tb.id);
-    this.saveBoard();
     this.clearHint();
+    this.clockOn = true;
 
     const t = now();
-    this.combo = t - this.lastMatch < 3.5 ? this.combo + 1 : 1;
+    const inFever = t < this.feverUntil;
+    const chained = inFever || t - Math.max(this.lastMatch, this.feverUntil) < COMBO_WINDOW;
+    this.combo = chained ? this.combo + 1 : 1;
+    if (!chained) this.nextFever = FEVER_AT;
     this.lastMatch = t;
+    this.bestCombo = Math.max(this.bestCombo, this.combo);
     report.note('clear', `${a.c},${a.r}+${b.c},${b.r} k${ta.kind} combo${this.combo} left${this.board.tileCount}`);
     sound.clear(this.combo);
     sound.buzz(18);
     if (this.combo >= 2) this.showCombo(this.combo);
+    if (inFever) this.feverUntil = Math.min(this.feverT0 + FEVER_MAX, this.feverUntil + 0.8);
+    else if (this.combo >= this.nextFever && !this.board.isEmpty) this.startFever(t);
+    if (this.combo % COMBO_PRIZE === 0) {
+      this.hints++;
+      this.save();
+      this.updateBadges();
+      this.hintBtn.popT0 = t;
+      this.toast(L.comboPrize(this.combo));
+    }
+
+    this.applyTwists(a, b);
+    this.saveBoard();
+    this.updateInfo();
 
     const pa = this.point(a), pb = this.point(b);
     if (this.mode === 'challenge') {
-      const points = 10 * Math.min(this.combo, 10);
+      const points = 10 * Math.min(this.combo, 10) * (t < this.feverUntil ? 2 : 1);
       if (this.bestAtStart > 0 && this.score <= this.bestAtStart && this.score + points > this.bestAtStart) {
         this.toast(L.newBest() + ' 🎉');
       }
@@ -1007,6 +1533,67 @@ export class Game {
       this.burst((pa.x + pb.x) / 2, (pa.y + pb.y) / 2);
     }
     this.after(0.2, () => this.checkBoard(), 'check');
+    if (t < this.feverUntil) this.after(0.45, () => this.feverHint(), 'feverHint');
+  }
+
+  /**
+   * What a clear does to the rest of the board: ice beside it cracks, loose tiles fall with the
+   * gravity, and gifts that now touch an empty cell unwrap.
+   */
+  applyTwists(a, b) {
+    const t = now();
+    for (const p of this.board.crackAround([a, b])) {
+      const n = this.node(p);
+      if (!n) continue;
+      n.fx = fxOf(this.board.get(p));
+      n.tapT0 = t;
+      const q = this.point(p);
+      for (let i = 0; i < 4; i++) this.spawnSparkle(q.x, q.y);
+    }
+    if (this.rules.gravity) {
+      const moves = this.board.applyGravity(this.rules.gravity);
+      let longest = 0;
+      for (const m of moves) {
+        const n = this.nodes.get(m.t.id);
+        if (!n) continue;
+        const dur = 0.12 + 0.035 * m.dist;
+        longest = Math.max(longest, dur);
+        this.anim.to(n, this.point(m.to), dur, { ease: 'in', delay: 0.08, key: 'move' });
+      }
+      if (moves.length) this.busyUntil = Math.max(this.busyUntil, t + 0.08 + longest);
+    }
+    for (const p of this.board.revealGifts()) {
+      const n = this.node(p);
+      if (!n) continue;
+      n.fx = 0;
+      n.tapT0 = t + 0.1;
+      const q = this.point(p);
+      this.after(0.1, () => { for (let i = 0; i < 5; i++) this.spawnSparkle(q.x, q.y); });
+    }
+  }
+
+  startFever(t) {
+    this.feverT0 = t;
+    this.feverUntil = t + FEVER_TIME;
+    this.feverHints = FEVER_HINTS;
+    this.nextFever = this.combo + FEVER_AGAIN;
+    this.feverCanvas = Art.outlinedText([{ text: L.fever(), size: 64 * this.s, weight: 900, color: '#FF4FB8', italic: true }], 0.2, this.feverCanvas);
+    this.feverFx = { sprite: this.feverCanvas, t0: t };
+    sound.play('win', { gain: 0.55, rate: 1.25 });
+    sound.buzz(30);
+    report.note('fever', `combo${this.combo}`);
+  }
+
+  get inFever() { return now() < this.feverUntil; }
+
+  /** Early in a fever the next pair lights up by itself after a clear, FEVER_HINTS times. */
+  feverHint() {
+    if (!this.inFever || !this.feverHints || this.finishing || this.board.isEmpty || this.drag || this.hinted.length) return;
+    if (this.busy) { this.after(0.15, () => this.feverHint(), 'feverHint'); return; }
+    const move = this.board.findMove();
+    if (!move) return;
+    this.feverHints--;
+    this.showMove(move);
   }
 
   checkBoard() {
@@ -1016,7 +1603,23 @@ export class Game {
     } else if (!this.board.hasMove) {
       this.clearHint();
       this.clearSelection();
-      if (this.relaxed) {
+      if (this.board.hasCovered) {
+        // stuck behind ice or wrapping: that gives way before anything gets shuffled
+        const t = now();
+        for (const p of this.board.thaw()) {
+          const n = this.node(p);
+          if (!n) continue;
+          n.fx = 0;
+          n.tapT0 = t;
+          const q = this.point(p);
+          this.spawnSparkle(q.x, q.y);
+        }
+        this.saveBoard();
+        this.toast(L.thawed());
+        sound.play('shuffle', { gain: 0.6 });
+        this.busyUntil = now() + 0.5;
+        this.after(0.6, () => this.checkBoard(), 'check');
+      } else if (this.relaxed) {
         // Levels and Big can't be lost: a stuck board reshuffles for free
         this.toast(L.noMovesShuffling());
         this.after(0.8, () => this.performShuffle());
@@ -1033,7 +1636,8 @@ export class Game {
 
   // ------------------------------------------------------------ effects
 
-  addParticle(sprite, fn, dur) { this.particles.push({ sprite, fn, t0: now(), dur }); }
+  /** A particle drawn by `fn(age, out)` for `dur` seconds, starting `delay` from now (its age runs negative until then). */
+  addParticle(sprite, fn, dur, delay = 0) { this.particles.push({ sprite, fn, t0: now() + delay, dur }); }
 
   /**
    * The tile (face + icon) cut into the 3×3 grid of pieces a shatter flings out.
@@ -1076,7 +1680,7 @@ export class Game {
     if (!idle) return; // Safari < 17: the first clear of each kind cuts its own, as before
     const map = this.fragSprites;
     const todo = [];
-    for (const n of this.tiles) if (!map.has(n.kind) && !todo.includes(n.kind)) todo.push(n.kind);
+    for (const n of this.tiles) if (n.kind >= 0 && !map.has(n.kind) && !todo.includes(n.kind)) todo.push(n.kind);
     if (!todo.length) return;
     const step = deadline => {
       // a new layout throws the whole cache away, and with it any reason to keep cutting
@@ -1151,16 +1755,17 @@ export class Game {
     for (let i = 0; i < 6; i++) this.spawnSparkle(x + rand(-0.8, 0.8) * cell, y + rand(-0.6, 0.6) * cell);
   }
 
-  spawnSparkle(x, y) {
+  spawnSparkle(x, y, delay = 0) {
     const cell = this.cell;
     const x0 = x + rand(-0.3, 0.3) * cell, y0 = y + rand(-0.3, 0.3) * cell;
     const s0 = rand(0.4, 1), r0 = rand(0, 1);
     this.addParticle(this.sparkleSprite, (a, o) => {
+      if (a < 0) return false;
       const k = Math.min(1, a / 0.5);
       o.x = x0; o.y = y0 - cell * 0.3 * k; o.rot = r0; o.scale = s0 + (0.1 - s0) * k;
       o.alpha = a < 0.2 ? 1 : Math.max(0, 1 - (a - 0.2) / 0.3);
       return true;
-    }, 0.5);
+    }, 0.5, delay);
   }
 
   showPoints(n, x, y) {
@@ -1204,11 +1809,17 @@ export class Game {
     const move = this.board.findMove();
     if (!move) { this.checkBoard(); return; }
     this.hints--;
+    this.clockOn = true;
     report.note('hint', `${this.hints} left`);
     this.save();
     this.updateBadges();
     sound.play('tap');
+    this.showMove(move);
+  }
 
+  /** Lights up a move: the pair, or the tile to slide with an arrow and the twin it slides to. */
+  showMove(move) {
+    this.clearHint();
     const highlight = p => {
       const n = this.node(p);
       if (!n) return;
@@ -1294,7 +1905,7 @@ export class Game {
     sound.play('shuffle');
     const b = this.boardRect;
     const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
-    for (const p of this.board.occupied()) {
+    for (const p of this.board.movable()) {
       const n = this.node(p);
       if (!n) continue;
       this.anim.cancel(n);
@@ -1326,11 +1937,10 @@ export class Game {
         this.burst(b.x + rand(0.15, 0.85) * b.w, b.y + rand(0.2, 0.7) * b.h);
       });
     }
+    this.cancelTimer('feverHint');
+    this.feverUntil = Math.min(this.feverUntil, now());
     if (this.relaxed) {
-      const cleared = this.level;
-      this.level++;
-      this.save();
-      const result = { won: true, level: cleared };
+      const result = this.levelPrizes();
       this.after(1.7, () => this.ui.showResult(result), 'win');
       return;
     }
@@ -1342,7 +1952,42 @@ export class Game {
     this.save();
     this.updateScore();
     const result = this.makeResult(true, newBest);
+    result.puzzle = puzzle.award(2);
     this.after(1.7, () => this.ui.showResult(result), 'win');
+  }
+
+  /**
+   * Stars and prizes for a cleared level or daily board. One star for clearing it, one for
+   * beating the clock, one for reaching the combo goal. Every level pays a puzzle piece plus
+   * power-ups by stars, and every fifth level a chest on top; the daily board pays a piece a star.
+   */
+  levelPrizes() {
+    const r = this.rules;
+    const timeOk = this.playTime <= r.par;
+    const comboOk = this.bestCombo >= r.comboGoal;
+    const stars = 1 + (timeOk ? 1 : 0) + (comboOk ? 1 : 0);
+    const daily = this.mode === 'daily';
+    const prize = { hints: stars === 3 ? 2 : 1, shuffles: stars >= 2 ? 1 : 0, pieces: 1, chest: false };
+    if (r.milestone) {
+      prize.hints += 2;
+      prize.shuffles += 2;
+      prize.pieces += 1;
+      prize.chest = true;
+    }
+    if (daily) prize.pieces = Daily.record(this.dailyDate, stars);
+    this.hints += prize.hints;
+    this.shuffles += prize.shuffles;
+    const cleared = this.level;
+    if (!daily) this.level++;
+    this.save();
+    this.updateBadges();
+    if (daily) this.dailyDot = false;
+    report.note('WON', `${this.mode} ${daily ? this.dailyDate : 'level ' + cleared} ${stars}* ${Math.round(this.playTime)}s/${r.par} combo${this.bestCombo}/${r.comboGoal}`);
+    return {
+      won: true, level: cleared, daily, date: this.dailyDate, theme: r.theme, stars, timeOk, comboOk,
+      time: Math.round(this.playTime), par: r.par, bestCombo: this.bestCombo, comboGoal: r.comboGoal,
+      prize, puzzle: puzzle.award(prize.pieces), streak: daily ? Daily.streak : 0, best: daily ? Daily.best(this.dailyDate) : 0,
+    };
   }
 
   lose() {
@@ -1402,6 +2047,11 @@ export class Game {
       }
     }
     this.anim.update(dt);
+    if (this.clockOn && this.relaxed && !this.finishing && !this.ui.anyOpen && !this.board.isEmpty) {
+      const before = Math.ceil(this.rules.par - this.playTime);
+      this.playTime += dt;
+      if (Math.ceil(this.rules.par - this.playTime) !== before) this.updateInfo();
+    }
     let gone = false;
     for (const n of this.tiles) if (n.gone) { gone = true; break; }
     if (gone) this.tiles = this.tiles.filter(n => !n.gone);
@@ -1510,7 +2160,7 @@ export class Game {
       sig = Math.imul(sig ^ n.id, 16777619);
       sig = Math.imul(sig ^ ((n.x * 4) | 0), 16777619);
       sig = Math.imul(sig ^ ((n.y * 4) | 0), 16777619);
-      sig = Math.imul(sig ^ ((n.kind << 1) | (n.lit ? 1 : 0)), 16777619);
+      sig = Math.imul(sig ^ ((n.kind << 4) | (n.fx << 1) | (n.lit ? 1 : 0)), 16777619);
     }
     sig = Math.imul(sig ^ live.length, 16777619) >>> 0;
 
@@ -1551,18 +2201,31 @@ export class Game {
       if (w === null) n.wobbleT0 = -1;
       else rot += w;
     }
+    // during a twist's entrance: the ice or wrapping isn't on yet, or is just landing
+    let cover = 1;
+    if (n.fxIn > t - 0.3) {
+      const since = t - n.fxIn;
+      if (since < 0) cover = 0;
+      else { cover = since / 0.3; scale *= segments(FX_POP, since, 1) ?? 1; }
+    }
     const alpha = n.alpha * this.tileAlpha;
     if (alpha <= 0.001) return;
     const ctx = this.ctx;
-    const base = n.lit ? this.tileLitSprite : this.tileSprite;
-    const icon = this.emojiSprites[n.kind % this.emojiSprites.length];
-    const tw = base.w, th = base.h, iw = icon.w;
+    const fx = n.fx;
+    const base = fx === 1 ? this.stoneSprite : n.lit ? this.tileLitSprite : this.tileSprite;
+    const icon = fx === 1 || (fx === 4 && cover === 0) ? null : fx === 4 ? this.giftSprite : this.emojiSprites[n.kind % this.emojiSprites.length];
+    const ice = cover === 0 ? null : fx === 2 ? this.ice1Sprite : fx === 3 ? this.ice2Sprite : null;
+    const tw = base.w, th = base.h, iw = icon ? icon.w : 0;
     const nx = n.x, ny = n.y;
     ctx.globalAlpha = Math.min(1, alpha);
     if (rot === 0 && scale === 1) {
       const x = snap(nx - tw / 2), y = snap(ny - th / 2);
       ctx.drawImage(base, x, y, tw, th);
-      ctx.drawImage(icon, snap(nx - iw / 2), snap(ny - iw / 2 - th * 0.05), iw, iw);
+      if (icon) ctx.drawImage(icon, snap(nx - iw / 2), snap(ny - iw / 2 - th * 0.05), iw, iw);
+      if (ice) {
+        ctx.globalAlpha = Math.min(1, alpha) * cover;
+        ctx.drawImage(ice, x, y, tw, th);
+      }
       if (n.flashT0 >= 0) {
         ctx.globalAlpha = 0.85;
         ctx.drawImage(this.tileFlashSprite, x, y, tw, th);
@@ -1571,7 +2234,11 @@ export class Game {
       const c = Math.cos(rot) * scale * DPR, s = Math.sin(rot) * scale * DPR;
       ctx.setTransform(c, s, -s, c, nx * DPR, ny * DPR);
       ctx.drawImage(base, -tw / 2, -th / 2, tw, th);
-      ctx.drawImage(icon, -iw / 2, -iw / 2 - th * 0.05, iw, iw);
+      if (icon) ctx.drawImage(icon, -iw / 2, -iw / 2 - th * 0.05, iw, iw);
+      if (ice) {
+        ctx.globalAlpha = Math.min(1, alpha) * cover;
+        ctx.drawImage(ice, -tw / 2, -th / 2, tw, th);
+      }
       if (n.flashT0 >= 0) {
         ctx.globalAlpha = 0.85;
         const f = this.tileFlashSprite;
@@ -1601,6 +2268,7 @@ export class Game {
 
   render(t) {
     const ctx = this.ctx, s = this.s;
+    this.moveStage(t);
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     ctx.globalAlpha = 1;
     ctx.drawImage(this.bg, 0, 0, this.W, this.H);
@@ -1645,7 +2313,25 @@ export class Game {
       ctx.drawImage(this.colBand, this.bands.x - this.cell / 2, this.gridTop, this.colBand.w, this.colBand.h);
     }
 
+    const fever = t < this.feverUntil;
+    if (fever) {
+      const b = this.boardRect;
+      ctx.globalAlpha = 0.16 + 0.08 * Math.sin(t * 9);
+      ctx.fillStyle = '#FF4FB8';
+      ctx.fillRect(this.gridLeft, this.gridTop, b.w - 2 * (this.gridLeft - b.x), b.h - 2 * (this.gridTop - b.y));
+      ctx.globalAlpha = 1;
+    }
+
     this.drawTiles(t);
+
+    if (fever) {
+      const b = this.boardRect;
+      ctx.globalAlpha = 0.55 + 0.35 * Math.sin(t * 9);
+      ctx.strokeStyle = '#FF4FB8';
+      ctx.lineWidth = 5 * s;
+      ctx.strokeRect(b.x + 2.5 * s, b.y + 2.5 * s, b.w - 5 * s, b.h - 5 * s);
+      ctx.globalAlpha = 1;
+    }
 
     if (this.hintArrow) {
       const h = this.hintArrow;
@@ -1693,6 +2379,14 @@ export class Game {
     const gearPress = this.gear.pressT0 >= 0 ? segments(PRESS, t - this.gear.pressT0, 1) : null;
     if (gearPress === null) this.gear.pressT0 = -1;
     this.drawAt(this.gear.sprite, this.gear.x, this.gear.y, 0, gearPress ?? 1, 1);
+    const dailyPress = this.dailyBtn.pressT0 >= 0 ? segments(PRESS, t - this.dailyBtn.pressT0, 1) : null;
+    if (dailyPress === null) this.dailyBtn.pressT0 = -1;
+    this.drawAt(this.dailyBtn.sprite, this.dailyBtn.x, this.dailyBtn.y, 0, dailyPress ?? 1, 1);
+    if (this.dailyDot) {
+      const half = this.dailyBtn.sprite.w / 2;
+      const pulse = 1 + 0.12 * Math.max(0, Math.sin(t * 4));
+      this.drawAt(this.dotSprite, this.dailyBtn.x + half - 3 * s, this.dailyBtn.y - half + 3 * s, 0, pulse, 1);
+    }
 
     let popScale = 1;
     if (this.scorePopT0 >= 0) {
@@ -1705,20 +2399,55 @@ export class Game {
       const b = this.bestSprite;
       this.drawAt(b, this.W - 24 * s - b.w / 2, this.topY + 24 * s + b.h / 2, 0, 1, 1);
     }
+    if (this.infoSprite) {
+      const b = this.infoSprite;
+      const left = this.rules.par - this.playTime;
+      // the last ten seconds tick
+      const tick = left > 0 && left <= 10 && this.clockOn ? 1 + 0.08 * Math.max(0, Math.cos(TAU * (left % 1))) : 1;
+      this.drawAt(b, this.W - 24 * s - b.w / 2, this.topY + 24 * s + b.h / 2, 0, tick, 1);
+    }
 
     this.drawAt(this.versionSprite, this.versionPos.x, this.versionPos.y, 0, 1, 1);
     this.drawButton(this.hintBtn, t);
     this.drawButton(this.shuffleBtn, t);
 
+    // The combo stays up for as long as the chain is alive, with a bar under it running down to
+    // the moment it breaks (pink in a fever, when it can't).
     if (this.comboFx) {
       const a = t - this.comboFx.t0;
       const sp2 = this.comboFx.sprite;
-      if (a > 1.78) this.comboFx = null;
+      const since = t - Math.max(this.lastMatch, this.feverUntil);
+      const alive = fever || since < COMBO_WINDOW;
+      const alpha = alive ? 1 : 1 - (since - COMBO_WINDOW) / 0.3;
+      if (alpha <= 0) this.comboFx = null;
       else {
         const scale = a < 0.18 ? 1.6 - 0.6 * EASE.out(a / 0.18) : 1;
-        const alpha = a < 1.48 ? 1 : 1 - (a - 1.48) / 0.3;
         const b = this.boardRect;
-        this.drawAt(sp2, this.W - 6 * s - sp2.w / 2, b.y + b.h + 2 * s + sp2.h / 2, 0, scale, alpha);
+        const right = this.W - 6 * s;
+        const y = b.y + b.h + 2 * s + sp2.h / 2;
+        this.drawAt(sp2, right - sp2.w / 2, y, 0, scale, alpha);
+        const frac = fever
+          ? (this.feverUntil - t) / (this.feverUntil - this.feverT0)
+          : Math.max(0, 1 - since / COMBO_WINDOW);
+        const mw = 104 * s, mh = 8 * s, mx = right - 6 * s - mw, my = y + sp2.h / 2 - 2 * s;
+        ctx.globalAlpha = alpha * 0.6;
+        ctx.fillStyle = '#0D0D0D';
+        ctx.fillRect(mx, my, mw, mh);
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = fever ? '#FF4FB8' : frac < 0.3 ? '#FF6B3D' : '#FFE14A';
+        ctx.fillRect(mx + 1.5 * s, my + 1.5 * s, (mw - 3 * s) * frac, mh - 3 * s);
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    if (this.feverFx) {
+      const a = t - this.feverFx.t0;
+      if (a > 1.2) this.feverFx = null;
+      else {
+        const scale = a < 0.2 ? 0.4 + 0.8 * EASE.out(a / 0.2) : 1.2 - 0.1 * ((a - 0.2) / 1);
+        const alpha = a < 0.9 ? 1 : 1 - (a - 0.9) / 0.3;
+        const b = this.boardRect;
+        this.drawAt(this.feverFx.sprite, b.x + b.w / 2, b.y + b.h * 0.42, -0.08, scale, alpha);
       }
     }
 
@@ -1731,7 +2460,7 @@ export class Game {
         this.drawAt(this.toastSprite.sprite, b.x + b.w / 2, b.y + b.h / 2, 0, 1, alpha);
       }
     }
-    ctx.globalAlpha = 1;
+    this.drawScreenFx(t);
   }
 
   // ------------------------------------------------------------ debug helpers (?autoplay, ?stuck, ?endgame)

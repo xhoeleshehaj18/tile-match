@@ -87,7 +87,7 @@ class Photos {
     return e;
   }
 
-  async load(entry) {
+  async load(entry, withBlur = true) {
     const res = await fetch('photos/' + entry.f);
     const buf = new Uint8Array(await res.arrayBuffer());
     const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: buf.slice(0, 12) }, this.key, buf.slice(12));
@@ -95,7 +95,7 @@ class Photos {
     const img = new Image();
     img.src = url;
     await img.decode(); // decoded ahead of time so showing it never stutters
-    img.blurSeed = await blurSeed(img);
+    if (withBlur) img.blurSeed = await blurSeed(img);
     return img;
   }
 

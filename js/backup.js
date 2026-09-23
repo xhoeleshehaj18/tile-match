@@ -15,12 +15,19 @@
 const FORMAT = 1;
 const PARAM = 's';
 const MODE_KEYS = ['hints', 'shuffles', 'secondChanceUsed', 'score', 'level', 'board', 'boardTotal'];
+const LEVEL_KEYS = ['boardFx', 'time', 'bestCombo'];
 const KEYS = [
   ...MODE_KEYS, ...MODE_KEYS.map(k => 'levels.' + k),
   'best', 'wins', 'games', 'streak', 'bestStreak',
   'mode', 'sound', 'haptics', 'volume', 'chinese',
   // added later: new keys only ever go on the end, so an older link still reads back correctly
   ...MODE_KEYS.map(k => 'big.' + k),
+  // v21: twists on the board, the clock, the daily board and the photo puzzle
+  ...['', 'levels.', 'big.'].flatMap(p => LEVEL_KEYS.map(k => p + k)),
+  ...MODE_KEYS.map(k => 'daily.' + k), ...LEVEL_KEYS.map(k => 'daily.' + k),
+  'daily.date', 'daily.best', 'daily.streak', 'daily.last', 'daily.returnTo',
+  'puzzle.photo', 'puzzle.pieces', 'puzzle.album', 'levels.intro', 'big.intro',
+  'levels.since', 'big.since', 'puzzle.welcome',
 ];
 const isBoard = k => k === 'board' || k.endsWith('.board');
 

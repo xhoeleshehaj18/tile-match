@@ -2,14 +2,14 @@
 // background (the newest version is used from the next launch). Encrypted photos never change
 // once written, so they're cached as-is.
 
-const CACHE = 'tile-match-v20';
-const BUILD = 20;
+const CACHE = 'tile-match-v21';
+const BUILD = 21;
 const PHOTOS = 'tile-match-photos'; // kept across app updates so photos never download twice
 const APP = [
   './', 'index.html', 'style.css', 'manifest.webmanifest',
   'js/main.js', 'js/game.js', 'js/board.js', 'js/art.js', 'js/ui.js',
   'js/sound.js', 'js/sfx.js', 'js/i18n.js', 'js/store.js', 'js/photos.js', 'js/version.js',
-  'js/report.js', 'js/backup.js', 'js/splash.js',
+  'js/report.js', 'js/backup.js', 'js/splash.js', 'js/levels.js', 'js/puzzle.js', 'js/puzzlefx.js',
   'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
 ];
 

@@ -22,6 +22,8 @@ if (standalone) document.documentElement.classList.add('standalone');
 const ui = new UI(document.getElementById('ui'));
 const game = new Game(canvas, ui);
 ui.game = game;
+// decided before anything is played: does this save predate the twists and the photo puzzle?
+const welcomeOwed = ui.welcomeOwed();
 
 // iOS: stop pinch-zoom and the double-tap magnifier from ever kicking in.
 for (const type of ['gesturestart', 'gesturechange', 'dblclick']) {
@@ -44,7 +46,8 @@ splash.whenRevealed(() => {
   game.dealIn();
   if (firstReveal) {
     firstReveal = false;
-    setTimeout(() => ui.maybeNudgeKeepSafe(), 2000);
+    if (welcomeOwed) setTimeout(() => ui.showWelcome(welcomeOwed), 900);
+    else setTimeout(() => ui.maybeNudgeKeepSafe(), 2000);
   }
 });
 

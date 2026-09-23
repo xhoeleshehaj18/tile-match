@@ -10,9 +10,45 @@ export const DIRS = [UP, DOWN, LEFT, RIGHT];
 export const moved = (p, d, n = 1) => ({ c: p.c + d.dc * n, r: p.r + d.dr * n });
 export const samePos = (a, b) => a.c === b.c && a.r === b.r;
 
+// Randomness goes through `rng`, so a daily board can be dealt from a seed: the same date deals
+// the same board on every phone.
+let rng = Math.random;
+
+/** A small seeded generator (mulberry32). */
+function seeded(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+export function hashSeed(text) {
+  let h = 0x811c9dc5;
+  for (const ch of String(text)) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+  return h >>> 0;
+}
+
+/** Runs `fn` with every random choice drawn from `seed`. */
+export function withSeed(seed, fn) {
+  const prev = rng;
+  rng = seeded(seed);
+  try { return fn(); } finally { rng = prev; }
+}
+
+export const random = () => rng();
+
+/** A tile that can be matched: not a rock, not frozen, not still wrapped. */
+export const free = t => !!t && !t.stone && !t.ice && !t.gift;
+/** A tile that never moves: a rock, or one frozen in ice. It stops slides, and gravity. */
+const fixed = t => !!t && (t.stone || t.ice > 0);
+
 export function shuffled(a) {
   for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(rng() * (i + 1));
     [a[i], a[j]] = [a[j], a[i]];
   }
   return a;
@@ -31,15 +67,22 @@ export class Board {
   get(p) { return this.inBounds(p) ? this.cells[p.r * this.cols + p.c] : null; }
   set(p, t) { if (this.inBounds(p)) this.cells[p.r * this.cols + p.c] = t; }
 
+  /** No tiles left to clear. Rocks stay behind and don't count. */
   get isEmpty() {
-    for (const t of this.cells) if (t) return false;
+    for (const t of this.cells) if (t && !t.stone) return false;
     return true;
   }
 
   get tileCount() {
     let n = 0;
-    for (const t of this.cells) if (t) n++;
+    for (const t of this.cells) if (t && !t.stone) n++;
     return n;
+  }
+
+  /** Anything still frozen or wrapped: what a stuck board can thaw before it has to shuffle. */
+  get hasCovered() {
+    for (const t of this.cells) if (t && (t.ice || t.gift)) return true;
+    return false;
   }
 
   occupied() {
@@ -65,11 +108,11 @@ export class Board {
   /** The nearest identical tile `p` can see looking along `d`, with nothing in between. */
   seenIn(p, d) {
     const t = this.get(p);
-    if (!t) return null;
+    if (!free(t)) return null;
     let q = moved(p, d);
     while (this.inBounds(q)) {
       const o = this.get(q);
-      if (o) return o.kind === t.kind ? q : null;
+      if (o) return free(o) && o.kind === t.kind ? q : null;
       q = moved(q, d);
     }
     return null;
@@ -78,7 +121,7 @@ export class Board {
   /** True when `a` and `b` are identical and see each other along a clear row or column. */
   sees(a, b) {
     const ta = this.get(a), tb = this.get(b);
-    if (!ta || !tb || ta.kind !== tb.kind || (a.c === b.c && a.r === b.r)) return false;
+    if (!free(ta) || !free(tb) || ta.kind !== tb.kind || (a.c === b.c && a.r === b.r)) return false;
     if (a.c !== b.c && a.r !== b.r) return false;
     const d = { dc: Math.sign(b.c - a.c), dr: Math.sign(b.r - a.r) };
     for (let q = moved(a, d); !samePos(q, b); q = moved(q, d)) if (this.get(q)) return false;
@@ -88,7 +131,7 @@ export class Board {
 
   touching(a, b) {
     const ta = this.get(a), tb = this.get(b);
-    return Math.abs(a.c - b.c) + Math.abs(a.r - b.r) === 1 && !!ta && !!tb && ta.kind === tb.kind;
+    return Math.abs(a.c - b.c) + Math.abs(a.r - b.r) === 1 && free(ta) && free(tb) && ta.kind === tb.kind;
   }
 
   touchingPartner(p) {
@@ -101,15 +144,21 @@ export class Board {
 
   // --- Sliding
 
-  /** Tiles pushed when dragging `p` toward `d`, and how many empty cells lie beyond them. */
+  /** Tiles pushed when dragging `p` toward `d`, and how many empty cells lie beyond them.
+   *  Only a tile that can be matched is dragged, and a rock or ice anywhere in the row it would
+   *  push holds the whole row still. */
   slideBlock(p, d) {
-    if (!this.get(p)) return { block: [], free: 0 };
+    if (!free(this.get(p))) return { block: [], free: 0 };
     const block = [p];
     let q = moved(p, d);
-    while (this.inBounds(q) && this.get(q)) { block.push(q); q = moved(q, d); }
-    let free = 0;
-    while (this.inBounds(q) && !this.get(q)) { free++; q = moved(q, d); }
-    return { block, free };
+    while (this.inBounds(q) && this.get(q)) {
+      if (fixed(this.get(q))) return { block, free: 0 };
+      block.push(q);
+      q = moved(q, d);
+    }
+    let room = 0;
+    while (this.inBounds(q) && !this.get(q)) { room++; q = moved(q, d); }
+    return { block, free: room };
   }
 
   /** Moves the dragged tile and everything it pushes. Returns the dragged tile's new position. */
@@ -129,14 +178,14 @@ export class Board {
   /** The nearest identical tile with nothing in between, along the row and column of `p`. */
   straightMatch(p) {
     const t = this.get(p);
-    if (!t) return null;
+    if (!free(t)) return null;
     let best = null, bestSteps = Infinity;
     for (const d of DIRS) {
       let q = moved(p, d), steps = 1;
       while (this.inBounds(q)) {
         const o = this.get(q);
         if (o) {
-          if (o.kind === t.kind && steps < bestSteps) { best = q; bestSteps = steps; }
+          if (free(o) && o.kind === t.kind && steps < bestSteps) { best = q; bestSteps = steps; }
           break;
         }
         q = moved(q, d);
@@ -163,6 +212,7 @@ export class Board {
   findSlide() {
     const scratch = new Board(this.cols, this.rows);
     for (const p of shuffled(this.occupied())) {
+      if (!free(this.get(p))) continue;
       for (const d of DIRS) {
         const free = this.slideBlock(p, d).free;
         for (let dist = 1; dist <= free; dist++) {
@@ -182,21 +232,97 @@ export class Board {
     let n = 0;
     for (const p of this.occupied())
       for (const d of [RIGHT, DOWN])
-        if (this.get(moved(p, d))?.kind === this.get(p).kind) n++;
+        if (this.touching(p, moved(p, d))) n++;
     return n;
+  }
+
+  /** Cells holding tiles that can move: everything but rocks and ice. */
+  movable() { return this.occupied().filter(p => !fixed(this.get(p))); }
+
+  // --- Twists: ice, gifts and gravity
+
+  /** A clear next to ice cracks it one layer. Returns the tiles it cracked. */
+  crackAround(cleared) {
+    const out = [];
+    for (const p of cleared) {
+      for (const d of DIRS) {
+        const q = moved(p, d);
+        const t = this.get(q);
+        if (!t || !t.ice || out.some(o => samePos(o, q))) continue;
+        t.ice--;
+        if (!t.ice) delete t.ice;
+        out.push(q);
+      }
+    }
+    return out;
+  }
+
+  /** A wrapped tile opens once a cell next to it is empty. Returns the tiles it opened. */
+  revealGifts() {
+    const out = [];
+    for (const p of this.occupied()) {
+      const t = this.get(p);
+      if (!t.gift) continue;
+      if (DIRS.some(d => { const q = moved(p, d); return this.inBounds(q) && !this.get(q); })) {
+        delete t.gift;
+        out.push(p);
+      }
+    }
+    return out;
+  }
+
+  /** Melts all ice and opens every gift: a stuck board's first way out. Returns the changed cells. */
+  thaw() {
+    const out = [];
+    for (const p of this.occupied()) {
+      const t = this.get(p);
+      if (t.ice || t.gift) { delete t.ice; delete t.gift; out.push(p); }
+    }
+    return out;
+  }
+
+  /** Every loose tile falls toward `d` until it lands on something. Returns [{t, to, dist}]. */
+  applyGravity(d) {
+    const moves = [];
+    // the cells nearest the floor settle first, so each tile lands on one that already has
+    const depth = p => p.c * d.dc + p.r * d.dr;
+    const cells = this.allCells().sort((a, b) => depth(b) - depth(a));
+    for (const p of cells) {
+      const t = this.get(p);
+      if (!t || fixed(t)) continue;
+      let q = p, dist = 0;
+      for (let n = moved(q, d); this.inBounds(n) && !this.get(n); n = moved(n, d)) { q = n; dist++; }
+      if (dist) {
+        this.set(p, null);
+        this.set(q, t);
+        moves.push({ t, to: q, dist });
+      }
+    }
+    return moves;
   }
 
   // --- Shuffle / generation
 
-  /** Rearranges the tiles among the occupied cells so that at least one move exists. */
+  /** Rearranges the loose tiles among their cells so that at least one move exists. Rocks and
+   *  frozen tiles stay where they are; a wrapped tile keeps its wrapping. */
   shuffle() {
-    const spots = this.occupied();
+    const spots = this.movable();
     const tiles = spots.map(p => this.get(p));
     for (let i = 0; i < 40; i++) {
       const copy = this.clone();
       const order = shuffled(tiles.slice());
       spots.forEach((p, k) => copy.set(p, order[k]));
       if (copy.hasMove || copy.tileCount === 0) { this.cells = copy.cells; return; }
+    }
+    // Rocks can wall the last few tiles into cells that never line up, whatever order they are
+    // in. Then the tiles move house: dealt into any open cells, not only the ones they were in.
+    const open = spots.concat(this.allCells().filter(p => !this.get(p)));
+    for (let i = 0; i < 60; i++) {
+      const copy = this.clone();
+      for (const p of spots) copy.set(p, null);
+      const cells = shuffled(open.slice());
+      tiles.forEach((t, k) => copy.set(cells[k], t));
+      if (copy.hasMove) { this.cells = copy.cells; return; }
     }
     const order = shuffled(tiles.slice());
     spots.forEach((p, k) => this.set(p, order[k]));
@@ -210,14 +336,27 @@ export class Board {
    */
   static touchingShare(level) { return Math.max(0.04, 0.3 - (level - 1) * 0.02); }
 
-  static generate({ level, cols, rows, kindCount, share, kinds: kindsOverride }) {
-    const pairCount = Math.floor(cols * rows / 2);
+  static generate({ level, cols, rows, kindCount, share, kinds: kindsOverride, stones = 0, ice = 0, ice2 = 0, gifts = 0 }) {
+    // rocks come in mirrored pairs, which keeps the tile count even (and looks placed, not spilled)
+    stones = Math.min(Math.ceil(stones / 2) * 2, Math.floor(cols * rows / 4) * 2);
+    const pairCount = Math.floor((cols * rows - stones) / 2);
     const kinds = Math.min(kindCount, kindsOverride ?? 35 + (level - 1) * 2);
     share = share ?? Board.touchingShare(level);
 
     let board = new Board(cols, rows);
+    let nextId = 0;
+    const placeRocks = () => {
+      const left = shuffled(board.allCells().filter(p => p.c < cols / 2));
+      for (let i = 0; i < stones / 2; i++) {
+        const p = left[i];
+        board.set(p, { id: nextId++, kind: -1, stone: true });
+        board.set({ c: cols - 1 - p.c, r: p.r }, { id: nextId++, kind: -1, stone: true });
+      }
+    };
     for (let attempt = 0; attempt < 30; attempt++) {
       board = new Board(cols, rows);
+      nextId = 0;
+      placeRocks();
 
       // Every kind appears as one pair; leftover pairs go to distinct kinds so none shows up more than four times.
       const pairKinds = shuffled([...Array(kindCount).keys()]).slice(0, kinds);
@@ -228,7 +367,6 @@ export class Board {
       }
       shuffled(pairKinds);
 
-      let nextId = 0;
       const place = (p, kind) => board.set(p, { id: nextId++, kind });
 
       // Deal some pairs as touching dominoes...
@@ -248,22 +386,41 @@ export class Board {
       const rest = shuffled(pairKinds.concat(pairKinds));
       for (const p of board.allCells()) if (!board.get(p)) place(p, rest.pop());
 
-      if (board.touchingPairs >= 4) return board;
+      if (board.touchingPairs >= 4) break;
     }
-    board.shuffle();
+
+    // Ice and gifts go on last, on tiles picked at random. Double ice is picked from the iced ones.
+    const loose = shuffled(board.occupied().filter(p => !board.get(p).stone));
+    const iced = loose.slice(0, Math.min(ice, loose.length));
+    iced.forEach((p, i) => { board.get(p).ice = i < ice2 ? 2 : 1; });
+    for (const p of loose.slice(iced.length, iced.length + gifts)) board.get(p).gift = true;
+    if (!board.hasMove) board.shuffle();
     return board;
   }
 
-  /** Tile kinds cell by cell (-1 = empty), for saving a game in progress. */
-  snapshot() { return this.cells.map(t => (t ? t.kind : -1)); }
+  /** Tile kinds cell by cell (-1 = empty, and rocks), for saving a game in progress. */
+  snapshot() { return this.cells.map(t => (t && !t.stone ? t.kind : -1)); }
 
-  static fromSnapshot(cols, rows, kinds) {
+  /** The twists cell by cell, one character each: s rock, 1/2 ice, g gift, . nothing. '' if none. */
+  fxSnapshot() {
+    const out = this.cells.map(t => (!t ? '.' : t.stone ? 's' : t.ice ? String(t.ice) : t.gift ? 'g' : '.')).join('');
+    return /[^.]/.test(out) ? out : '';
+  }
+
+  static fromSnapshot(cols, rows, kinds, fx = '') {
     if (!Array.isArray(kinds) || kinds.length !== cols * rows) return null;
+    if (typeof fx !== 'string' || (fx && fx.length !== cols * rows)) fx = '';
     const b = new Board(cols, rows);
     const counts = new Map();
     kinds.forEach((k, i) => {
-      if (k >= 0) {
-        b.cells[i] = { id: i, kind: k };
+      const f = fx[i];
+      if (f === 's') {
+        b.cells[i] = { id: i, kind: -1, stone: true };
+      } else if (k >= 0) {
+        const t = { id: i, kind: k };
+        if (f === '1' || f === '2') t.ice = Number(f);
+        else if (f === 'g') t.gift = true;
+        b.cells[i] = t;
         counts.set(k, (counts.get(k) ?? 0) + 1);
       }
     });

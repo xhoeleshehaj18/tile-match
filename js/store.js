@@ -1,6 +1,7 @@
 // Saved progress in localStorage, mirroring the iOS keys.
 
 import { changed } from './backup.js';
+import { todayKey, yesterdayKey } from './levels.js';
 
 export const store = {
   int(key, fallback = 0) {
@@ -51,8 +52,34 @@ export const Stats = {
   },
 };
 
-export const MODES = ['levels', 'challenge', 'big'];
+export const MODES = ['levels', 'daily', 'challenge', 'big'];
 export const savedMode = () => {
   const m = localStorage.getItem('mode');
   return MODES.includes(m) ? m : 'levels';
+};
+
+/** The daily board: today's best stars, and how many days in a row she has cleared it. */
+export const Daily = {
+  best(date) {
+    const b = store.json('daily.best');
+    return b && b.d === date ? b.s : 0;
+  },
+  /** A streak still counts while yesterday's (or today's) board was the last one cleared. */
+  get streak() {
+    const last = localStorage.getItem('daily.last');
+    return last === todayKey() || last === yesterdayKey() ? store.int('daily.streak') : 0;
+  },
+  /** Records a cleared daily board. Returns how many stars are new today (one puzzle piece each). */
+  record(date, stars) {
+    const before = this.best(date);
+    if (stars > before) store.set('daily.best', { d: date, s: stars });
+    const last = localStorage.getItem('daily.last');
+    if (last !== date) {
+      const [y, m, d] = date.split('-').map(Number);
+      const prev = todayKey(new Date(y, m - 1, d - 1));
+      store.set('daily.streak', last === prev ? store.int('daily.streak') + 1 : 1);
+      store.set('daily.last', date);
+    }
+    return Math.max(0, stars - before);
+  },
 };

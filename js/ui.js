@@ -6,6 +6,11 @@ import { sound } from './sound.js';
 import { photos } from './photos.js';
 import { VERSION } from './version.js';
 import * as report from './report.js';
+import { puzzle, loadPhoto, jigsawFor, bitCount, PIECES } from './puzzle.js';
+import { pieceScene, framedBoard, FRAME } from './puzzlefx.js';
+import { store } from './store.js';
+import { Daily } from './store.js';
+import { todayKey, dailyRules } from './levels.js';
 
 const h = (tag, cls, text) => {
   const el = document.createElement(tag);
@@ -109,6 +114,51 @@ function tool(icon, label, onClick) {
   return b;
 }
 
+const TWIST_ICONS = { stones: '🪨', gravity: '⬇️', ice: '🧊', gifts: '🎁', duo: '✌️', mix: '✌️', ice2: '🧊', sweet: '🍬' };
+const clock = sec => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+
+/**
+ * The photo puzzle as a little board: the pieces in `mask` in place on their tray, the rest
+ * waiting as outlines. `card.paint(mask, whole)` redraws it, e.g. once new pieces have flown in;
+ * `card.ready` resolves once the photo is loaded and cut.
+ */
+function puzzleCard(photoId, mask, maxW, maxH) {
+  const card = h('div', 'jig-card');
+  const canvas = h('canvas');
+  card.append(canvas);
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const room = 1 + 2 * FRAME;
+  // until the photo is in, hold the space a phone photo would take
+  const guess = Math.min(maxW / 3, maxH / 4);
+  canvas.style.width = `${guess * 3}px`;
+  canvas.style.height = `${guess * 4}px`;
+  let jig = null, want = [mask, false];
+  card.paint = (m, whole = false) => {
+    want = [m, whole];
+    if (!jig) return;
+    const f = jig.fit((maxW / room) * dpr, (maxH / room) * dpr);
+    const art = framedBoard(jig, Math.round(f.w), Math.round(f.h), m, whole).canvas;
+    canvas.width = art.width;
+    canvas.height = art.height;
+    canvas.getContext('2d').drawImage(art, 0, 0);
+    canvas.style.width = `${art.width / dpr}px`;
+    canvas.style.height = `${art.height / dpr}px`;
+  };
+  card.ready = jigsawFor(photoId).then(j => { jig = j; card.paint(...want); });
+  card.canvas = canvas;
+  return card;
+}
+
+function starRow(n, animated = true) {
+  const row = h('div', 'stars');
+  for (let i = 0; i < 3; i++) {
+    const st = h('span', i < n ? 'star on' : 'star', '★');
+    if (animated && i < n) st.style.animationDelay = `${0.15 + i * 0.22}s`;
+    row.append(st);
+  }
+  return row;
+}
+
 /** Makes sure the newest files are stored on the phone (installing a new build if there is one). */
 async function forceUpdate() {
   if (!('serviceWorker' in navigator)) return;
@@ -148,7 +198,7 @@ export class UI {
     this.revivePending = null;
     this.breakKind = null;
     this.layers = {};
-    for (const name of ['settings', 'result', 'photo', 'report', 'keepSafe']) {
+    for (const name of ['settings', 'result', 'photo', 'report', 'keepSafe', 'intro', 'daily', 'album', 'welcome']) {
       const layer = h('div', `overlay ${name}`);
       layer.setAttribute('aria-hidden', 'true');
       root.append(layer);
@@ -156,7 +206,7 @@ export class UI {
     }
   }
 
-  get anyOpen() { return Object.values(this.layers).some(l => l.classList.contains('show')); }
+  get anyOpen() { return pieceScene.active || Object.values(this.layers).some(l => l.classList.contains('show')); }
 
   show(name) {
     const el = this.layers[name];
@@ -209,8 +259,8 @@ export class UI {
     scrim.addEventListener('click', () => this.hide('settings'));
 
     // Mode first: it's the one choice that changes the game. One line says what the chosen one is.
-    const hints = { levels: L.levelsHint, challenge: L.challengeHint, big: L.bigHint };
-    const mode = segmented([['levels', L.levelsMode()], ['challenge', L.challengeMode()], ['big', L.bigMode()]], this.game.mode, m => {
+    const hints = { levels: L.levelsHint, daily: L.dailyHint, challenge: L.challengeHint, big: L.bigHint };
+    const mode = segmented([['levels', L.levelsMode()], ['daily', L.dailyMode()], ['challenge', L.challengeMode()], ['big', L.bigMode()]], this.game.mode, m => {
       this.game.switchMode(m);
       this.openSettings();
     });
@@ -219,7 +269,7 @@ export class UI {
 
     const group = h('div', 'group');
     group.append(volumeRow());
-    if (sound.canVibrate) group.append(toggle('📳', L.vibration(), sound.haptics, on => sound.setHaptics(on)));
+    if (sound.canFeel) group.append(toggle('📳', L.vibration(), sound.haptics, on => sound.setHaptics(on)));
     const lang = h('div', 'row');
     lang.append(rowLabel('🌐', L.language()), segmented([[false, 'EN'], [true, '中文']], isChinese(), zh => {
       setChinese(zh);
@@ -252,6 +302,7 @@ export class UI {
     // the rarely needed things, as one quiet row of icons
     const status = h('p', 'note status-line');
     const tools = h('div', 'tools');
+    tools.append(tool('🧩', L.albumShort(), () => { this.hide('settings'); this.openAlbum(); }));
     tools.append(this.updateTool(status));
     if (!standalone()) {
       tools.append(tool('📲', L.keepSafeShort(), () => { this.hide('settings'); this.openKeepSafe(); }));
@@ -426,9 +477,36 @@ export class UI {
     let scrim, panel;
 
     if (r.level !== undefined) {
-      [scrim, panel] = this.panel(L.levelClear(r.level));
-      panel.append(h('div', 'big-emoji', '🏠✨'), h('p', 'sub', L.madeItHome()));
-      panel.append(button(L.nextLevel(), () => this.nextLevel()));
+      [scrim, panel] = this.panel(r.daily ? L.dailyClear() : L.levelClear(r.level));
+      panel.classList.add('result-panel');
+      panel.append(starRow(r.stars));
+      const goals = h('div', 'goals');
+      const goal = (ok, text) => goals.append(h('div', ok ? 'goal ok' : 'goal', `${ok ? '✓' : '✗'}  ${text}`));
+      goal(true, L.goalClear());
+      goal(r.timeOk, L.goalTime(clock(r.time), clock(r.par)));
+      goal(r.comboOk, L.goalCombo(r.bestCombo, r.comboGoal));
+      panel.append(goals);
+
+      const prizes = h('div', 'prizes');
+      if (r.prize.chest) prizes.append(h('span', 'prize chest', L.chest()));
+      prizes.append(h('span', 'prize', `+${r.prize.hints} 💡`));
+      if (r.prize.shuffles) prizes.append(h('span', 'prize', `+${r.prize.shuffles} 🔀`));
+      if (r.prize.pieces) prizes.append(h('span', 'prize piece', `+${r.prize.pieces} 🧩`));
+      panel.append(prizes);
+      if (r.daily) {
+        panel.append(h('p', 'note daily-note', r.prize.pieces ? L.dailyStreak(r.streak) : L.dailyNoNewStars(r.best)));
+      }
+      this.appendPuzzle(panel, r.puzzle);
+      if (r.daily) {
+        panel.append(button(r.stars < 3 ? L.tryForMore() : L.playAgain(), () => this.nextLevel(), r.stars < 3 ? 'pink' : 'blue'));
+        panel.append(button(L.backTo(this.dailyReturnMode()), () => {
+          this.result = null;
+          this.hide('result');
+          this.game.switchMode(this.dailyReturnMode());
+        }, 'orange slim'));
+      } else {
+        panel.append(button(L.nextLevel(), () => this.nextLevel()));
+      }
     } else {
       [scrim, panel] = this.panel(r.won ? L.boardCleared() : L.outOfMoves());
       panel.append(h('div', 'big-emoji', r.won ? '🏠✨' : '😵‍💫'));
@@ -441,6 +519,7 @@ export class UI {
       if (r.won && r.streak > 0) record.append(h('span', 'streak', L.streak(r.streak)));
       if (r.games > 0) record.append(h('span', 'games', L.record(r.wins, r.games)));
       panel.append(record);
+      if (r.won) this.appendPuzzle(panel, r.puzzle);
       if (r.canRevive) panel.append(button(L.secondChance(), () => this.secondChance(), 'pink'));
       panel.append(button(r.won ? L.playAgain() : L.tryAgain(), () => this.nextLevel()));
     }
@@ -452,6 +531,193 @@ export class UI {
     this.result = null;
     this.hide('result');
     this.game.nextLevel();
+  }
+
+  /**
+   * The puzzle the new pieces went into, and a line on how far along it is. Once the stars have
+   * landed the board lifts out of the card and the pieces fly in (see puzzlefx.js).
+   */
+  appendPuzzle(panel, p) {
+    if (!p) return;
+    const box = h('div', 'puzzle-box');
+    const card = puzzleCard(p.photo, p.before, 210, 150);
+    const line = h('p', 'puzzle-line', L.puzzleProgress(bitCount(p.before)));
+    box.append(card, line);
+    if (p.more) box.append(h('p', 'note', L.piecesToNext(p.more)));
+    panel.append(box);
+    const finish = () => {
+      card.paint(p.after, p.completed);
+      line.textContent = p.completed ? L.photoUnlocked() : L.puzzleProgress(bitCount(p.after));
+      line.classList.add(p.completed ? 'done' : 'grew');
+    };
+    setTimeout(async () => {
+      await card.ready;
+      if (!box.isConnected || !this.layers.result.classList.contains('show')) { finish(); return; }
+      const chip = panel.querySelector('.prize.piece');
+      await pieceScene.play(p, { from: card.canvas, origin: chip ? chip.getBoundingClientRect() : null });
+      finish();
+    }, 950);
+  }
+
+  // ---------------------------------------------------------------- twists
+
+  /** The card that introduces a new twist, the first time a level has it. */
+  showIntro(twist) {
+    if (this.anyOpen || this.breakKind || this.welcomeWaiting) { setTimeout(() => this.showIntro(twist), 1500); return; }
+    const layer = this.layers.intro;
+    layer.replaceChildren();
+    const [scrim, panel] = this.panel(L.twistTitle(twist));
+    const close = () => this.hide('intro');
+    scrim.addEventListener('click', close);
+    panel.append(h('p', 'tag-new', L.newTwist()), h('div', 'big-emoji', TWIST_ICONS[twist] ?? '✨'), h('p', 'why', L.twistText(twist)));
+    panel.append(button(L.letsGo(), close, 'pink'));
+    layer.append(scrim, panel);
+    this.show('intro');
+  }
+
+  // ---------------------------------------------------------------- welcome back
+
+  /**
+   * A save from before the twists and the puzzle (past level 5) gets a welcome the first time:
+   * what's new, and a whole photo for the levels already behind her. Returns the number of levels
+   * cleared when it's owed, else 0; decided once, on the first run of this version.
+   */
+  welcomeOwed() {
+    const state = localStorage.getItem('puzzle.welcome');
+    if (state !== null) return 0;
+    const best = Math.max(store.int('levels.level', 1), store.int('big.level', 1));
+    // the welcome goes first: a twist's card holds back until the gift is opened
+    if (best > 5) { this.welcomeWaiting = true; return best - 1; }
+    store.set('puzzle.welcome', 'no');
+    return 0;
+  }
+
+  showWelcome(cleared) {
+    this.welcomeWaiting = true;
+    if (this.anyOpen || this.breakKind) { setTimeout(() => this.showWelcome(cleared), 1500); return; }
+    const layer = this.layers.welcome;
+    layer.replaceChildren();
+    const [scrim, panel] = this.panel(L.welcomeTitle());
+    panel.classList.add('welcome-panel');
+    panel.append(h('div', 'big-emoji gift-bob', '🎁'));
+    panel.append(h('p', 'why', L.welcomeText()));
+    panel.append(h('p', 'sub', L.welcomeGift(cleared)));
+    if (this.game.since > 5) panel.append(h('p', 'note', L.welcomeRefresher()));
+    const open = button(L.openGift(), async () => {
+      const from = open.getBoundingClientRect();
+      store.set('puzzle.welcome', 'given');
+      this.hide('welcome');
+      await photos.loaded;
+      const p = puzzle.award(PIECES);
+      await pieceScene.play(p, { origin: from });
+      this.welcomeWaiting = false;
+    }, 'pink');
+    panel.append(open);
+    layer.append(scrim, panel);
+    this.show('welcome');
+  }
+
+  // ---------------------------------------------------------------- daily board
+
+  /** Where "Back" from the daily board goes: the mode she came from. */
+  dailyReturnMode() {
+    const m = localStorage.getItem('daily.returnTo');
+    return m && m !== 'daily' ? m : 'levels';
+  }
+
+  openDaily() {
+    const game = this.game;
+    const layer = this.layers.daily;
+    layer.replaceChildren();
+    const [scrim, panel] = this.panel(L.dailyTitle());
+    const close = () => this.hide('daily');
+    scrim.addEventListener('click', close);
+    const today = todayKey();
+    const rules = dailyRules(today);
+    const best = Daily.best(today);
+    const streak = Daily.streak;
+    panel.append(h('p', 'note', new Date().toLocaleDateString(isChinese() ? 'zh-CN' : 'en-US', { weekday: 'long', month: 'long', day: 'numeric' })));
+    panel.append(h('div', 'big-emoji', TWIST_ICONS[rules.theme] ?? '📅'));
+    panel.append(h('p', 'sub', L.dailyTheme(rules.theme)));
+    panel.append(starRow(best, false));
+    panel.append(h('p', 'why', best ? L.dailyBest(best) : L.dailyPitch()));
+    if (streak > 0) panel.append(h('p', 'streak-line', L.dailyStreak(streak)));
+    if (game.mode === 'daily') {
+      panel.append(button(L.resume(), close));
+      panel.append(button(L.backTo(this.dailyReturnMode()), () => { close(); game.switchMode(this.dailyReturnMode()); }, 'orange slim'));
+    } else {
+      panel.append(button(best >= 3 ? L.playAgain() : L.playDaily(), () => {
+        close();
+        localStorage.setItem('daily.returnTo', game.mode);
+        game.switchMode('daily');
+      }, 'pink'));
+      panel.append(button(L.notNow(), close, 'orange slim'));
+    }
+    layer.append(scrim, panel);
+    this.show('daily');
+  }
+
+  // ---------------------------------------------------------------- album
+
+  /** Every photo she has unlocked, and the one she's collecting now. */
+  openAlbum() {
+    const layer = this.layers.album;
+    layer.replaceChildren();
+    const [scrim, panel] = this.panel(L.albumTitle());
+    panel.classList.add('album-panel');
+    const close = () => this.hide('album');
+    scrim.addEventListener('click', close);
+
+    panel.append(h('p', 'note', L.albumHint()));
+    const now = h('div', 'puzzle-box');
+    now.append(puzzleCard(puzzle.current, puzzle.pieces, 250, 230), h('p', 'puzzle-line', L.puzzleProgress(puzzle.count)));
+    panel.append(now);
+
+    const album = puzzle.album;
+    panel.append(h('p', 'album-count', L.albumCount(album.length)));
+    const grid = h('div', 'album-grid');
+    const viewer = h('div', 'viewer');
+    viewer.addEventListener('click', () => {
+      viewer.classList.remove('show');
+      const img = viewer.querySelector('img');
+      if (img) { URL.revokeObjectURL(img.src); img.remove(); }
+    });
+    for (const id of album.slice().reverse()) {
+      const cell = h('button', 'thumb');
+      const canvas = h('canvas');
+      canvas.width = canvas.height = 180;
+      cell.append(canvas);
+      grid.append(cell);
+      cell.addEventListener('click', async () => {
+        sound.play('tap');
+        const img = await loadPhoto(id);
+        if (!img) return;
+        viewer.querySelector('img')?.remove();
+        viewer.append(img);
+        viewer.classList.add('show');
+      });
+    }
+    if (!album.length) grid.append(h('p', 'note empty-album', L.albumEmpty()));
+    panel.append(grid, button(L.resume(), close));
+    layer.append(scrim, panel, viewer);
+    this.show('album');
+
+    // thumbnails one at a time, so opening the album never stalls the page
+    (async () => {
+      const thumbs = [...grid.querySelectorAll('canvas')];
+      const ids = album.slice().reverse();
+      for (let i = 0; i < thumbs.length; i++) {
+        if (!layer.classList.contains('show')) return;
+        const img = await loadPhoto(ids[i]);
+        if (!img) { thumbs[i].parentElement.classList.add('nophoto'); continue; }
+        const c = thumbs[i], ctx = c.getContext('2d');
+        const side = Math.min(img.naturalWidth, img.naturalHeight);
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(img.src);
+        c.parentElement.classList.add('ready');
+      }
+    })();
   }
 
   /** Out of moves in Challenge: one photo break per game buys a rescue shuffle. */
