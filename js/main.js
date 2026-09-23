@@ -92,12 +92,12 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') {
   navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(check).catch(() => {});
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (!hadController) return; // first install: this page is already the newest
-    if (performance.now() - shownAt < 20000) location.reload();
+    if (performance.now() - shownAt < 20000) { splash.skipNextLoad(); location.reload(); }
     else updateReady = true;
   });
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
-    if (updateReady) { location.reload(); return; }
+    if (updateReady) { splash.skipNextLoad(); location.reload(); return; }
     shownAt = performance.now();
     check();
   });

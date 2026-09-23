@@ -57,6 +57,20 @@ document.addEventListener('visibilitychange', () => {
 
 paintArt();
 
+// An update reload right after opening would otherwise play the whole scene a second time.
+const SKIP = 'tm-skip-splash';
+try {
+  if (sessionStorage.getItem(SKIP)) {
+    sessionStorage.removeItem(SKIP);
+    el.classList.add('skip');
+  }
+} catch {}
+
+/** The next page load (an update reload) lifts the splash straight away. */
+export function skipNextLoad() {
+  try { sessionStorage.setItem(SKIP, '1'); } catch {}
+}
+
 /** Runs `fn` each time the splash starts to fade and uncovers the game. */
 export function whenRevealed(fn) {
   onReveal = fn;
