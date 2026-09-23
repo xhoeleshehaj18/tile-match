@@ -114,6 +114,28 @@ function tool(icon, label, onClick) {
   return b;
 }
 
+/** A secondary, quiet action ("Not now", "Cancel"): a plain button under the big one. */
+function quietButton(label, onClick) {
+  const b = h('button', 'update-btn', label);
+  b.addEventListener('click', () => { sound.play('tap'); onClick(); });
+  return b;
+}
+
+/** A reward chip: the amount and its icon as separate pieces, so the emoji sits centred on the text. */
+function prizeChip(cls, amount, icon) {
+  const chip = h('span', `prize ${cls}`.trim());
+  if (amount) chip.append(h('span', '', amount));
+  chip.append(h('span', 'ico', icon));
+  return chip;
+}
+
+// The first emoji in a line (and the line without it), e.g. "Frozen Wednesday 🧊" → 🧊 and "Frozen Wednesday".
+const EMOJI = /\s*((?:\p{Extended_Pictographic})(?:\uFE0F|\u200D\p{Extended_Pictographic})*\uFE0F?)/u;
+const splitEmoji = text => {
+  const m = text.match(EMOJI);
+  return m ? [m[1], text.replace(m[0], '').replace(/\s{2,}/g, ' ').trim()] : [null, text];
+};
+
 const TWIST_ICONS = { stones: '🪨', gravity: '⬇️', ice: '🧊', gifts: '🎁', duo: '✌️', mix: '✌️', ice2: '🧊', sweet: '🍬' };
 const clock = sec => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
 
@@ -398,9 +420,7 @@ export class UI {
       this.reportDone(L.reportQueued(), true);
     });
     panel.append(status, send);
-    const cancel = h('button', 'update-btn', L.reportCancel());
-    cancel.addEventListener('click', () => { sound.play('tap'); close(); });
-    panel.append(cancel);
+    panel.append(quietButton(L.reportCancel(), close));
 
     layer.append(scrim, panel);
     this.show('report');
@@ -481,17 +501,27 @@ export class UI {
       panel.classList.add('result-panel');
       panel.append(starRow(r.stars));
       const goals = h('div', 'goals');
-      const goal = (ok, text) => goals.append(h('div', ok ? 'goal ok' : 'goal', `${ok ? '✓' : '✗'}  ${text}`));
+      const goal = (ok, text) => {
+        const row = h('div', ok ? 'goal ok' : 'goal');
+        row.append(h('span', 'mark', ok ? '✓' : '✕'), h('span', '', text));
+        goals.append(row);
+      };
       goal(true, L.goalClear());
       goal(r.timeOk, L.goalTime(clock(r.time), clock(r.par)));
       goal(r.comboOk, L.goalCombo(r.bestCombo, r.comboGoal));
       panel.append(goals);
 
       const prizes = h('div', 'prizes');
-      if (r.prize.chest) prizes.append(h('span', 'prize chest', L.chest()));
-      prizes.append(h('span', 'prize', `+${r.prize.hints} 💡`));
-      if (r.prize.shuffles) prizes.append(h('span', 'prize', `+${r.prize.shuffles} 🔀`));
-      if (r.prize.pieces) prizes.append(h('span', 'prize piece', `+${r.prize.pieces} 🧩`));
+      if (r.prize.chest) {
+        const [icon, text] = splitEmoji(L.chest());
+        const chest = h('span', 'prize chest');
+        if (icon) chest.append(h('span', 'ico', icon));
+        chest.append(h('span', '', text));
+        prizes.append(chest);
+      }
+      prizes.append(prizeChip('', `+${r.prize.hints}`, '💡'));
+      if (r.prize.shuffles) prizes.append(prizeChip('', `+${r.prize.shuffles}`, '🔀'));
+      if (r.prize.pieces) prizes.append(prizeChip('piece', `+${r.prize.pieces}`, '🧩'));
       panel.append(prizes);
       if (r.daily) {
         panel.append(h('p', 'note daily-note', r.prize.pieces ? L.dailyStreak(r.streak) : L.dailyNoNewStars(r.best)));
@@ -513,7 +543,7 @@ export class UI {
       if (!r.won) panel.append(h('p', r.tilesLeft <= 20 ? 'sub close' : 'sub', L.tilesLeft(r.tilesLeft)));
       const score = h('div', 'score');
       score.append(h('span', 'label', L.score()), h('span', 'value', r.score.toLocaleString()));
-      score.append(r.newBest ? h('span', 'new-best', L.newBest()) : h('span', 'best', L.bestScore(r.best)));
+      score.append(r.newBest ? h('span', 'new-best', L.newBest()) : h('span', 'best', L.bestScore(r.best.toLocaleString())));
       panel.append(score);
       const record = h('div', 'record');
       if (r.won && r.streak > 0) record.append(h('span', 'streak', L.streak(r.streak)));
@@ -602,7 +632,6 @@ export class UI {
     panel.append(h('div', 'big-emoji gift-bob', '🎁'));
     panel.append(h('p', 'why', L.welcomeText()));
     panel.append(h('p', 'sub', L.welcomeGift(cleared)));
-    if (this.game.since > 5) panel.append(h('p', 'note', L.welcomeRefresher()));
     const open = button(L.openGift(), async () => {
       const from = open.getBoundingClientRect();
       store.set('puzzle.welcome', 'given');
@@ -636,9 +665,10 @@ export class UI {
     const rules = dailyRules(today);
     const best = Daily.best(today);
     const streak = Daily.streak;
-    panel.append(h('p', 'note', new Date().toLocaleDateString(isChinese() ? 'zh-CN' : 'en-US', { weekday: 'long', month: 'long', day: 'numeric' })));
-    panel.append(h('div', 'big-emoji', TWIST_ICONS[rules.theme] ?? '📅'));
-    panel.append(h('p', 'sub', L.dailyTheme(rules.theme)));
+    // the theme's own emoji goes big, and comes out of the line under it
+    const [themeIcon, themeText] = splitEmoji(L.dailyTheme(rules.theme));
+    panel.append(h('div', 'big-emoji', themeIcon ?? TWIST_ICONS[rules.theme] ?? '📅'));
+    panel.append(h('p', 'sub', themeText));
     panel.append(starRow(best, false));
     panel.append(h('p', 'why', best ? L.dailyBest(best) : L.dailyPitch()));
     if (streak > 0) panel.append(h('p', 'streak-line', L.dailyStreak(streak)));
@@ -651,7 +681,7 @@ export class UI {
         localStorage.setItem('daily.returnTo', game.mode);
         game.switchMode('daily');
       }, 'pink'));
-      panel.append(button(L.notNow(), close, 'orange slim'));
+      panel.append(quietButton(L.notNow(), close));
     }
     layer.append(scrim, panel);
     this.show('daily');
@@ -668,7 +698,6 @@ export class UI {
     const close = () => this.hide('album');
     scrim.addEventListener('click', close);
 
-    panel.append(h('p', 'note', L.albumHint()));
     const now = h('div', 'puzzle-box');
     now.append(puzzleCard(puzzle.current, puzzle.pieces, 250, 230), h('p', 'puzzle-line', L.puzzleProgress(puzzle.count)));
     panel.append(now);

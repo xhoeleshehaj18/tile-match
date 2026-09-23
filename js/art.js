@@ -157,20 +157,6 @@ export function iceOverlay(w, h, layers) {
   return c;
 }
 
-/** A round dark HUD button with an emoji on it, like the gear. */
-export function iconButton(size, ch) {
-  const [c, ctx] = surface(size, size);
-  rr(ctx, 1, 1, size - 2, size - 2, size * 0.14);
-  ctx.fillStyle = '#404040';
-  ctx.fill();
-  rr(ctx, 1, 1, size - 2, size - 2 - size * 0.06, size * 0.14);
-  ctx.fillStyle = '#111111';
-  ctx.fill();
-  const e = emoji(ch, size * 0.56);
-  ctx.drawImage(e, (size - e.w) / 2, (size - e.h) / 2 - size * 0.03, e.w, e.h);
-  return c;
-}
-
 /** A small red "something new" dot. */
 export function dot(size) {
   const [c, ctx] = surface(size, size);
@@ -487,6 +473,19 @@ export function gearButton(size) {
   return c;
 }
 
+/** The daily board's button: a calendar page in the gear's white, with today's date on it. */
+export function calendarButton(size, day) {
+  const [c, ctx] = surface(size, size);
+  rr(ctx, 1, 1, size - 2, size - 2, size * 0.14);
+  ctx.fillStyle = '#404040';
+  ctx.fill();
+  rr(ctx, 1, 1, size - 2, size - 2 - size * 0.06, size * 0.14);
+  ctx.fillStyle = '#111111';
+  ctx.fill();
+  calendarGlyph(ctx, size / 2, size / 2 - size * 0.03, size * 0.54, '#FFFFFF', day, '#111111');
+  return c;
+}
+
 function bulbIcon(ctx, x, y, w, h, o) {
   const R = Math.min(w, h) * 0.3;
   const cx = x + w / 2, cy = y + h * 0.36;
@@ -598,25 +597,111 @@ export function badge(text, size) {
   return c;
 }
 
+// A touch of tracking on the small heavy HUD text keeps the rounded letters from clumping.
+// (Canvas letterSpacing is newer than the rest; where it's missing the text is simply untracked.)
+const TRACK = '0.02em';
+
 let measurer = null;
-function measure(font, text) {
+function measure(font, text, track = '0px') {
   measurer ??= document.createElement('canvas').getContext('2d');
   measurer.font = font;
+  measurer.letterSpacing = track;
   return measurer.measureText(text).width;
 }
 
+/** Small line icons drawn in the text colour, for glyphs that fonts render inconsistently. */
+function clockGlyph(ctx, cx, cy, r, color) {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = r * 0.3;
+  ctx.beginPath();
+  ctx.arc(cx, cy + r * 0.08, r * 0.82, 0, Math.PI * 2);
+  ctx.stroke();
+  rr(ctx, cx - r * 0.26, cy - r * 1.12, r * 0.52, r * 0.26, r * 0.1);
+  ctx.fill();
+  ctx.lineWidth = r * 0.24;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy + r * 0.1);
+  ctx.lineTo(cx, cy - r * 0.42);
+  ctx.moveTo(cx, cy + r * 0.1);
+  ctx.lineTo(cx + r * 0.36, cy + r * 0.28);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** A calendar page; with `day`, today's date sits on it. */
+function calendarGlyph(ctx, cx, cy, size, color, day = null, ink = '#111111') {
+  const w = size, h = size * 0.92, x = cx - w / 2, y = cy - h / 2 + size * 0.04;
+  const lw = size * 0.1, head = h * 0.3;
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = lw;
+  rr(ctx, x + lw / 2, y + lw / 2, w - lw, h - lw, size * 0.16);
+  ctx.stroke();
+  rr(ctx, x, y, w, head + lw / 2, size * 0.16);
+  ctx.fill();
+  ctx.fillRect(x, y + head * 0.5, w, head * 0.5 + lw / 2);
+  // the two rings the page hangs from
+  for (const rx of [x + w * 0.3, x + w * 0.7]) {
+    rr(ctx, rx - size * 0.055, y - size * 0.1, size * 0.11, size * 0.22, size * 0.055);
+    ctx.fill();
+    ctx.lineWidth = size * 0.05;
+    ctx.strokeStyle = ink;
+    ctx.stroke();
+  }
+  if (day !== null) {
+    ctx.font = `800 ${size * 0.5}px ${FONT}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(day), cx, y + head + (h - head) / 2 + size * 0.01);
+  }
+  ctx.restore();
+}
+
+const GLYPHS = { '⏱': 'clock', '📅': 'calendar' };
+// Splits text into runs of words and emoji, so each can be drawn in its own font and centred on its own.
+const PICTO = /((?:\p{Extended_Pictographic}|\p{Regional_Indicator})(?:️|‍(?:\p{Extended_Pictographic})|[\u{1F3FB}-\u{1F3FF}])*️?)/u;
+
+/**
+ * Text on a rounded dark pill. Emoji in the text are drawn from the emoji font at a size matched
+ * to the letters and centred on the line (inline, they sit low and small), and ⏱ / 📅 become
+ * drawn icons in the text colour.
+ */
 export function pill(text, height, { color = '#FFFFFF', bg = 'rgba(13,13,13,0.92)', fontScale = 0.56, radius = 0.28, pad = 0.9, reuse = null } = {}) {
-  const font = `800 ${height * fontScale}px ${FONT}`;
-  const w = measure(font, text) + height * pad;
+  const fs = height * fontScale;
+  const font = `800 ${fs}px ${FONT}`;
+  const icon = fs * 1.02;
+  const runs = text.split(PICTO).filter(Boolean).map(s => {
+    const glyph = GLYPHS[s.replace('️', '')];
+    if (glyph) return { glyph, w: icon * 0.9 };
+    if (PICTO.test(s)) return { emoji: s, w: icon * 1.1 };
+    return { text: s, w: measure(font, s, TRACK) };
+  });
+  const inner = runs.reduce((a, r) => a + r.w, 0);
+  const w = inner + height * pad;
   const [c, ctx] = surface(w, height, reuse);
   rr(ctx, 0, 0, w, height, height * radius);
   ctx.fillStyle = bg;
   ctx.fill();
   ctx.font = font;
+  ctx.letterSpacing = TRACK;
   ctx.fillStyle = color;
-  ctx.textAlign = 'center';
+  ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
-  ctx.fillText(text, w / 2, height / 2 + height * 0.03);
+  const mid = height / 2 + height * 0.03;
+  let x = (w - inner) / 2;
+  for (const r of runs) {
+    if (r.text) ctx.fillText(r.text, x, mid);
+    else if (r.glyph === 'clock') clockGlyph(ctx, x + r.w / 2, height / 2, icon * 0.4, color);
+    else if (r.glyph === 'calendar') calendarGlyph(ctx, x + r.w / 2, height / 2, icon * 0.78, color, null, bg);
+    else {
+      const e = emoji(r.emoji, icon * 0.98);
+      ctx.drawImage(e, x + (r.w - e.w) / 2, (height - e.h) / 2, e.w, e.h);
+    }
+    x += r.w;
+  }
   return c;
 }
 
@@ -634,7 +719,7 @@ function star(ctx, cx, cy, R) {
 export function scorePill(text, height, reuse = null) {
   const font = `800 ${height * 0.56}px ${FONT}`;
   const R = height * 0.3, pad = height * 0.42, gap = height * 0.18;
-  const w = pad + R * 2 + gap + measure(font, text) + pad;
+  const w = pad + R * 2 + gap + measure(font, text, TRACK) + pad;
   const [c, ctx] = surface(w, height, reuse);
   rr(ctx, 0, 0, w, height, height * 0.28);
   ctx.fillStyle = 'rgba(13,13,13,0.92)';
@@ -646,6 +731,7 @@ export function scorePill(text, height, reuse = null) {
   ctx.lineWidth = height * 0.04;
   ctx.stroke();
   ctx.font = font;
+  ctx.letterSpacing = TRACK;
   ctx.fillStyle = '#FFFFFF';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';

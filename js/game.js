@@ -421,7 +421,8 @@ export class Game {
     const topY = Math.max(safe.top, 14 * s) + 34 * s;
     this.topY = topY;
     this.gear = { x: 40 * s, y: topY, sprite: Art.gearButton(54 * s), scale: 1, pressT0: -1 };
-    this.dailyBtn = { x: 104 * s, y: topY, sprite: Art.iconButton(54 * s, '📅'), pressT0: -1 };
+    this.dailyBtn = { x: 104 * s, y: topY, sprite: null, day: 0, pressT0: -1 };
+    this.refreshDailyButton();
     this.dotSprite = Art.dot(18 * s);
     const bW = 114 * s, bH = 86 * s;
     const buttonY = H - (safe.bottom * 0.5 + (bottomH - safe.bottom * 0.5) / 2);
@@ -511,18 +512,27 @@ export class Game {
     this.shuffleBtn.alpha = this.shuffles === 0 && outForGood ? 0.55 : 1;
   }
 
+  /** The calendar on the daily button shows today's date; redrawn when the day turns over. */
+  refreshDailyButton() {
+    const day = new Date().getDate();
+    if (this.dailyBtn.day === day) return;
+    this.dailyBtn.day = day;
+    this.dailyBtn.sprite = Art.calendarButton(54 * this.s, day);
+  }
+
   updateScore(animated = true) {
     const s = this.s;
+    this.refreshDailyButton();
     const levels = this.relaxed;
     this.scoreSprite = levels
       ? Art.pill(this.mode === 'daily' ? L.dailyPill() : L.level(this.level), 38 * s, { reuse: this.scoreSprite })
-      : Art.scorePill(String(this.score), 38 * s, this.scoreSprite);
+      : Art.scorePill(this.score.toLocaleString(), 38 * s, this.scoreSprite);
     this.dailyDot = Daily.best(todayKey()) === 0;
     this.updateInfo();
     if (levels) {
       this.bestSprite = null;
     } else {
-      let text = L.best(Math.max(Stats.best, this.score));
+      let text = L.best(Math.max(Stats.best, this.score).toLocaleString());
       if (Stats.streak > 0) text += `   🔥 ${Stats.streak}`;
       if (text !== this.bestText) {
         this.bestText = text;
@@ -2397,14 +2407,14 @@ export class Game {
     this.drawAt(sp, this.W - 22 * s - sp.w / 2, this.topY, 0, popScale, 1);
     if (this.bestSprite) {
       const b = this.bestSprite;
-      this.drawAt(b, this.W - 24 * s - b.w / 2, this.topY + 24 * s + b.h / 2, 0, 1, 1);
+      this.drawAt(b, this.W - 22 * s - b.w / 2, this.topY + 24 * s + b.h / 2, 0, 1, 1);
     }
     if (this.infoSprite) {
       const b = this.infoSprite;
       const left = this.rules.par - this.playTime;
       // the last ten seconds tick
       const tick = left > 0 && left <= 10 && this.clockOn ? 1 + 0.08 * Math.max(0, Math.cos(TAU * (left % 1))) : 1;
-      this.drawAt(b, this.W - 24 * s - b.w / 2, this.topY + 24 * s + b.h / 2, 0, tick, 1);
+      this.drawAt(b, this.W - 22 * s - b.w / 2, this.topY + 24 * s + b.h / 2, 0, tick, 1);
     }
 
     this.drawAt(this.versionSprite, this.versionPos.x, this.versionPos.y, 0, 1, 1);
