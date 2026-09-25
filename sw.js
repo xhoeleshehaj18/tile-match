@@ -1,9 +1,10 @@
-// Offline support and instant start: app files are served from the cache and refreshed in the
-// background (the newest version is used from the next launch). Encrypted photos never change
-// once written, so they're cached as-is.
+// Offline support and instant start: app files are served from the cache. Each release changes
+// this file, and the new worker downloads every app file fresh before it takes over (the newest
+// version is used from the next launch). Encrypted photos never change once written, so they're
+// cached as-is.
 
-const CACHE = 'tile-match-v26';
-const BUILD = 26;
+const CACHE = 'tile-match-v27';
+const BUILD = 27;
 const PHOTOS = 'tile-match-photos'; // kept across app updates so photos never download twice
 const APP = [
   './', 'index.html', 'style.css', 'manifest.webmanifest',
@@ -85,15 +86,17 @@ self.addEventListener('fetch', e => {
     return;
   }
 
-  // everything else: cache first, refresh in the background
+  // everything else: from this version's cache, or fetched once and kept. No refreshing in the
+  // background: GitHub Pages lets the phone and its CDN keep a file for ten minutes, so a refresh
+  // right after a release could store the previous version's file here, and the phone would run
+  // a mix of two versions.
   e.respondWith(
     caches.open(CACHE).then(async cache => {
       const cached = await cache.match(req, { ignoreSearch: true });
-      const refresh = fetch(req).then(res => {
-        if (res.ok) cache.put(req, res.clone());
-        return res;
-      }).catch(() => cached);
-      return cached || refresh;
+      if (cached) return cached;
+      const res = await fetch(req);
+      if (res.ok) cache.put(req, res.clone());
+      return res;
     }),
   );
 });

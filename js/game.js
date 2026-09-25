@@ -275,8 +275,11 @@ export class Game {
     // a daily board left over from another day is gone: today has its own
     if (this.mode === 'daily' && localStorage.getItem('daily.date') !== todayKey()) return false;
     // A board saved before v24 with rocks, ice or gifts on it: the rocks' cells would come back as
-    // holes, so the same level is dealt again without them.
-    if (localStorage.getItem(this.key('boardFx')) !== null) {
+    // holes, so the same level is dealt again without them. Every board is dealt full now, so one
+    // dealt with fewer tiles than that had rocks, even if it lost its twists marker along the way.
+    const dealt = localStorage.getItem(this.key('boardTotal'));
+    const full = Math.floor((this.cols * this.rows) / 2) * 2;
+    if (localStorage.getItem(this.key('boardFx')) !== null || (dealt !== null && Number(dealt) < full)) {
       store.remove(this.key('boardFx'));
       store.remove(this.key('board'));
       return false;

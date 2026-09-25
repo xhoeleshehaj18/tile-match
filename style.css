@@ -72,6 +72,22 @@ body { position: fixed; inset: 0; }
   touch-action: none;
 }
 
+/* Home Screen app on iOS 26+: the system blurs the top of the screen, down past the status bar
+   and over the HUD, unless a fixed box of one solid colour touches the top edge. Then it uses that
+   colour instead. This is that box, the colour the sky starts at, as tall as the status bar. */
+#status-strip { display: none; }
+html.standalone #status-strip {
+  display: block;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: env(safe-area-inset-top);
+  background: #86BBF9;
+  pointer-events: none;
+  z-index: 5;
+}
+
 #lvh-probe { position: fixed; top: 0; left: 0; width: 1px; height: 100lvh; visibility: hidden; pointer-events: none; }
 
 /* Home Screen app: fill the whole screen, not the (shorter) reported viewport */
