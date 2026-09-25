@@ -19,13 +19,19 @@
 /* Everything in the panels is sized in rem, laid out at 16px for a phone like hers (390 wide).
    The root size follows the screen so a panel always fits: the menu is 22.5rem wide and about
    43rem tall with its margins, inside the game's column (the width, or 62% of the height). */
+/* How far down from the top anything readable has to start. In the Home Screen app, iOS 26+ blurs
+   the top of the screen from the status bar down another ~38pt (the Liquid Glass edge effect, which
+   nothing turns off), so there the game and the panels start below that. main.js sets ios-glass,
+   and reads this back through #safe-probe to lay out the game. */
 html {
+  --safe-top: env(safe-area-inset-top);
   --vh: 100vh;
   font-size: clamp(13px, min((min(100vw, 0.62 * var(--vh)) - 32px) / 22.5,
-    (var(--vh) - max(16px, env(safe-area-inset-top)) - max(16px, env(safe-area-inset-bottom))) / 43), 22px);
+    (var(--vh) - max(16px, var(--safe-top)) - max(16px, env(safe-area-inset-bottom))) / 43), 22px);
 }
 @supports (height: 100svh) { html { --vh: 100svh; } }
 html.standalone { --vh: 100lvh; }
+html.ios-glass { --safe-top: calc(env(safe-area-inset-top) + 40px); }
 
 html, body {
   margin: 0;
@@ -72,22 +78,6 @@ body { position: fixed; inset: 0; }
   touch-action: none;
 }
 
-/* Home Screen app on iOS 26+: the system blurs the top of the screen, down past the status bar
-   and over the HUD, unless a fixed box of one solid colour touches the top edge. Then it uses that
-   colour instead. This is that box, the colour the sky starts at, as tall as the status bar. */
-#status-strip { display: none; }
-html.standalone #status-strip {
-  display: block;
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: env(safe-area-inset-top);
-  background: #86BBF9;
-  pointer-events: none;
-  z-index: 5;
-}
-
 #lvh-probe { position: fixed; top: 0; left: 0; width: 1px; height: 100lvh; visibility: hidden; pointer-events: none; }
 
 /* Home Screen app: fill the whole screen, not the (shorter) reported viewport */
@@ -100,7 +90,7 @@ html.standalone .overlay { bottom: auto; height: 100lvh; }
   inset: 0;
   visibility: hidden;
   pointer-events: none;
-  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  padding: var(--safe-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 
 /* ------------------------------------------------------------ overlays */
@@ -111,7 +101,7 @@ html.standalone .overlay { bottom: auto; height: 100lvh; }
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+  padding: max(16px, var(--safe-top)) 16px max(16px, env(safe-area-inset-bottom));
   opacity: 0;
   visibility: hidden;
   transition: opacity 0.2s ease-out, visibility 0s linear 0.2s;
@@ -831,7 +821,7 @@ html.standalone .overlay { bottom: auto; height: 100lvh; }
   display: none;
   align-items: center;
   justify-content: center;
-  padding: max(20px, env(safe-area-inset-top)) 16px max(20px, env(safe-area-inset-bottom));
+  padding: max(20px, var(--safe-top)) 16px max(20px, env(safe-area-inset-bottom));
   background: rgba(0, 0, 0, 0.9);
 }
 .overlay .viewer.show { display: flex; }
@@ -852,7 +842,7 @@ html.standalone .overlay { bottom: auto; height: 100lvh; }
 
 .overlay.photo .frame {
   position: absolute;
-  inset: calc(env(safe-area-inset-top) + 4.75rem) 1.25rem calc(env(safe-area-inset-bottom) + 6rem);
+  inset: calc(var(--safe-top) + 4.75rem) 1.25rem calc(env(safe-area-inset-bottom) + 6rem);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -875,7 +865,7 @@ html.standalone .overlay { bottom: auto; height: 100lvh; }
 
 .overlay.photo .top {
   position: absolute;
-  top: calc(env(safe-area-inset-top) + 0.875rem);
+  top: calc(var(--safe-top) + 0.875rem);
   left: 1.25rem;
   right: 1.25rem;
   display: flex;

@@ -22,6 +22,9 @@ const fullHeight = document.getElementById('lvh-probe');
 // Home Screen web app: iOS reports a viewport one status bar shorter than the screen it draws on.
 const standalone = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
 if (standalone) document.documentElement.classList.add('standalone');
+// iOS 26+ blurs the top of a Home Screen app well past the status bar; style.css keeps clear of it
+const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+if (standalone && ios) document.documentElement.classList.add('ios-glass');
 const ui = new UI(document.getElementById('ui'));
 const game = new Game(canvas, ui);
 ui.game = game;
