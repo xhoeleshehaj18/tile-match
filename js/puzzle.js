@@ -12,6 +12,7 @@
 import { store } from './store.js';
 import { photos } from './photos.js';
 import { random, hashSeed } from './board.js';
+import { fillHeart } from './icons.js';
 
 export const PIECES = 12;
 const ALL = (1 << PIECES) - 1;
@@ -200,10 +201,7 @@ export class Jigsaw {
       ctx.fillStyle = 'rgba(255,255,255,0.55)';
       const rnd = prng(hashSeed('hearts' + this.id));
       const size = Math.min(W, H) / 7;
-      ctx.font = `${size}px sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      for (let i = 0; i < 14; i++) ctx.fillText('♥', rnd() * W, rnd() * H);
+      for (let i = 0; i < 14; i++) fillHeart(ctx, rnd() * W, rnd() * H, size * 0.3);
     }
     this.cache.set(key, cv);
     return cv;
@@ -286,10 +284,7 @@ export class Jigsaw {
       // a faint heart where each piece will go
       const c = this.cell(i, W, H);
       ctx.fillStyle = 'rgba(214,120,160,0.22)';
-      ctx.font = `${c.s * 0.34}px sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('♥', c.x + c.w / 2, c.y + c.h / 2 + c.s * 0.02);
+      fillHeart(ctx, c.x + c.w / 2, c.y + c.h / 2, c.s * 0.11);
     }
     this.cache.set(key, cv);
     return cv;

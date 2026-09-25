@@ -118,6 +118,13 @@ class Sound {
     this.start(this.buffers.win, 1, 0.7, 0.8);
   }
 
+  /** Something bought in the shop: a quick sparkle up the scale and a little fanfare. */
+  purchase() {
+    if (!this.enabled || this.volume <= 0 || !this.ctx) return;
+    for (let i = 0; i < 5; i++) this.start(this.pieceBell(i * 2 + 4), 1, 0.8, i * 0.06);
+    this.start(this.buffers.win, 1, 0.6, 0.3);
+  }
+
   start(buffer, rate, gain, delay = 0) {
     const src = this.ctx.createBufferSource();
     src.buffer = buffer;

@@ -10,6 +10,8 @@
 import { PIECES, bitCount, jigsawFor } from './puzzle.js';
 import { sound } from './sound.js';
 import { L } from './i18n.js';
+import { fillHeart, uiScale } from './icons.js';
+import { plate, bigText, pill, INKS, LOOK } from './hud.js';
 
 const ALL = (1 << PIECES) - 1;
 const clamp01 = t => (t < 0 ? 0 : t > 1 ? 1 : t);
@@ -20,6 +22,15 @@ const ease = {
   in: t => t * t * t,
   outBack: t => 1 + 2.7 * Math.pow(t - 1, 3) + 1.7 * Math.pow(t - 1, 2),
 };
+/** A HUD sprite as an element, at its size in CSS pixels, read out as `text`. */
+const sized = (c, text) => {
+  c.style.width = `${c.w}px`;
+  c.style.height = `${c.h}px`;
+  c.setAttribute('role', 'img');
+  c.setAttribute('aria-label', text.replace(/\{\w+\}/g, '').trim());
+  return c;
+};
+const TITLE = 38; // the size of "Photo unlocked!", at 16px to the rem
 const h = (tag, cls, text) => {
   const el = document.createElement(tag);
   if (cls) el.className = cls;
@@ -27,31 +38,25 @@ const h = (tag, cls, text) => {
   return el;
 };
 
-/** The tray around the pieces, as a share of the board's shorter side. */
-export const FRAME = 0.05;
+/** The tray around the pieces, as a share of the board's shorter side; its lip, as a share of the tray. */
+export const FRAME = 0.05, LIP = 0.4;
+const TRAY = { face: ['#FFFFFF', '#FBE7EF'], lip: LOOK.blush.lip };
 
 /**
- * The board as she sees it: a rounded tray with the pieces she has in place, W×H being the photo
- * area in device pixels. `whole` draws the finished photo without seams.
+ * The board as she sees it: the pieces she has in place on a tray built like the HUD's plates
+ * (a white face with an ink outline, on a pink lip), W×H being the photo area in device pixels.
+ * `whole` draws the finished photo without seams.
  */
 export function framedBoard(jig, W, H, mask, whole = false) {
   const P = Math.round(Math.min(W, H) * FRAME);
   const cv = document.createElement('canvas');
-  cv.width = Math.round(W + 2 * P); cv.height = Math.round(H + 2 * P);
+  cv.width = Math.round(W + 2 * P); cv.height = Math.round(H + 2 * P + P * LIP);
   const ctx = cv.getContext('2d');
-  const r = P * 1.6;
-  ctx.beginPath();
-  ctx.roundRect(0, 0, cv.width, cv.height, r);
-  const g = ctx.createLinearGradient(0, 0, 0, cv.height);
-  g.addColorStop(0, '#FFFFFF'); g.addColorStop(1, '#FBE7EF');
-  ctx.fillStyle = g;
-  ctx.fill();
-  ctx.lineWidth = Math.max(1, P * 0.12);
-  ctx.strokeStyle = 'rgba(200,120,150,0.35)';
-  ctx.stroke();
+  const lw = Math.max(1.5, P * 0.16);
+  plate(ctx, lw / 2, lw / 2, cv.width - lw, cv.height - lw, P * 1.6, lw, cv.height - H - 2 * P, TRAY);
   if (whole) ctx.drawImage(jig.picture(W, H), P, P, W, H);
   else jig.draw(ctx, P, P, W, H, mask);
-  // the lip of the tray, casting a little shade on the pieces below it
+  // the rim of the tray, casting a little shade on the pieces below it
   ctx.save();
   ctx.beginPath();
   ctx.rect(P, P, W, H);
@@ -91,10 +96,7 @@ function sprites() {
   });
   const heart = color => sprite(64, (c, s) => {
     c.fillStyle = color;
-    c.font = `${s * 0.9}px sans-serif`;
-    c.textAlign = 'center';
-    c.textBaseline = 'middle';
-    c.fillText('♥', s / 2, s * 0.55);
+    fillHeart(c, s / 2, s / 2, s * 0.32);
   });
   const glow = sprite(128, (c, s) => {
     const g = c.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
@@ -164,6 +166,19 @@ class Scene {
       cv.width = Math.round(vw * dpr); cv.height = Math.round(vh * dpr);
       const ctx = cv.getContext('2d');
       const S = sprites();
+
+      // the words, drawn like the HUD's: a count of pieces on a blush plate, like the prize the
+      // pieces came from, and for a finished photo big pink letters over a cream plate
+      const u = uiScale();
+      let countSprite = null;
+      const showCount = n => {
+        countSprite = pill(`{puzzle}${L.puzzleCount(n)}`, 34 * u, { look: LOOK.blush, fontScale: 0.46, reuse: countSprite });
+        this.count.replaceChildren(sized(countSprite, L.puzzleCount(n)));
+      };
+      if (completed) {
+        this.title.replaceChildren(sized(bigText([{ text: L.photoUnlockedTitle(), size: TITLE * u, ...INKS.pink }]), L.photoUnlockedTitle()));
+        this.sub.replaceChildren(sized(pill(L.addedToAlbum(), 32 * u, { fontScale: 0.46 }), L.addedToAlbum()));
+      }
 
       // the board in the middle of the screen, in device pixels
       const fit = jig.fit(Math.min(vw * 0.84, 440) * dpr, Math.min(vh * 0.54, 560) * dpr);
@@ -256,7 +271,7 @@ class Scene {
             rot: Math.random() * 6, vr: (Math.random() - 0.5) * 8,
           });
         }
-        this.count.textContent = L.puzzleCount(bitCount(f.mask));
+        showCount(bitCount(f.mask));
         this.count.classList.remove('bump');
         void this.count.offsetWidth;
         this.count.classList.add('bump');
@@ -275,8 +290,6 @@ class Scene {
         if (completed && t >= T_DONE && !this.revealed) {
           this.revealed = true;
           sound.revealPhoto();
-          this.title.textContent = L.photoUnlockedTitle();
-          this.sub.textContent = L.addedToAlbum();
           this.layer.classList.add('revealed');
         }
         if (completed && !whole && t >= T_DONE + 0.9) { whole = true; board = framedBoard(jig, W, H, ALL, true); }
@@ -513,12 +526,14 @@ class Scene {
         frameId = requestAnimationFrame(frame);
       };
 
-      // words sit above and below the board
+      // the words sit above and below the board; the title's letters take up the middle of its
+      // canvas (from 0.37 to 1.27 of its size down), the rest is room for the outline and the lip
       const top = home.y / dpr, bottom = (home.y + BH) / dpr;
-      this.title.style.top = `${Math.max(12, top - 78)}px`;
-      this.sub.style.top = `${Math.max(52, top - 36)}px`;
-      this.count.style.top = `${bottom + 16}px`;
-      this.count.textContent = L.puzzleCount(bitCount(before));
+      const subTop = Math.max(44 * u, top - 42 * u);
+      this.sub.style.top = `${subTop}px`;
+      this.title.style.top = `${subTop - 4 * u - 1.27 * TITLE * u}px`;
+      this.count.style.top = `${bottom + 14 * u}px`;
+      showCount(bitCount(before));
       if (from) from.style.visibility = 'hidden';
       requestAnimationFrame(() => this.layer.classList.add('show'));
       frameId = requestAnimationFrame(frame);

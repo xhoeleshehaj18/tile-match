@@ -28,6 +28,9 @@ const KEYS = [
   'daily.date', 'daily.best', 'daily.streak', 'daily.last', 'daily.returnTo',
   'puzzle.photo', 'puzzle.pieces', 'puzzle.album', 'levels.intro', 'big.intro',
   'levels.since', 'big.since', 'puzzle.welcome',
+  // v23: the shop, and what a board in progress has earned toward it
+  'coins', 'coins.earned', 'shop.owned', 'shop.rider', 'shop.trail', 'shop.gift',
+  ...['', 'levels.', 'big.', 'daily.'].map(p => p + 'fevers'), 'paidScore',
 ];
 const isBoard = k => k === 'board' || k.endsWith('.board');
 

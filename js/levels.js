@@ -137,5 +137,5 @@ export function dailyRules(date) {
 /** Challenge keeps the original rules: no twists, no clock. */
 export const CHALLENGE_RULES = { level: 1, stones: 0, ice: 0, ice2: 0, gifts: 0, gravity: null, intro: null, comboGoal: 0, par: 0, milestone: false };
 
-/** The arrow for a gravity direction, for the HUD. */
-export const arrowOf = d => (!d ? '' : d.dr > 0 ? '↓' : d.dr < 0 ? '↑' : d.dc < 0 ? '←' : '→');
+/** The arrow icon for a gravity direction, as a `{name}` token for the HUD. */
+export const arrowOf = d => (!d ? '' : `{arrow${d.dr > 0 ? 'Down' : d.dr < 0 ? 'Up' : d.dc < 0 ? 'Left' : 'Right'}}`);

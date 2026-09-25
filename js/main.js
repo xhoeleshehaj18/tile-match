@@ -11,9 +11,12 @@ import { Game } from './game.js';
 import { UI } from './ui.js';
 import { sound } from './sound.js';
 import * as report from './report.js';
+import { iconEl } from './icons.js';
+import { L } from './i18n.js';
 
 const stage = document.getElementById('stage');
 const canvas = document.getElementById('game');
+const backdrop = document.getElementById('backdrop');
 const probe = document.getElementById('safe-probe');
 const fullHeight = document.getElementById('lvh-probe');
 // Home Screen web app: iOS reports a viewport one status bar shorter than the screen it draws on.
@@ -48,11 +51,22 @@ splash.whenRevealed(() => {
     firstReveal = false;
     if (welcomeOwed) setTimeout(() => ui.showWelcome(welcomeOwed), 900);
     else setTimeout(() => ui.maybeNudgeKeepSafe(), 2000);
+    // the shop's opening gift, once, after the welcome (it waits for any panel to close)
+    setTimeout(() => ui.maybeShowShopGift(), 1200);
   }
 });
 
-let lastSize = '';
+// A phone on its side would squeeze the board into a sliver: style.css shows this instead.
+const turn = document.createElement('div');
+turn.id = 'turn';
+turn.setAttribute('aria-live', 'polite');
+const turnText = document.createElement('p');
+turn.append(iconEl('phone', 'ic turn-icon'), turnText);
+document.body.append(turn);
+
+let lastSize = '', lastWide = '';
 function fit() {
+  turnText.textContent = L.turnUpright();
   const vw = window.innerWidth;
   const vh = standalone ? Math.max(window.innerHeight, fullHeight.offsetHeight) : window.innerHeight;
   if (vw < 100 || vh < 200) return; // not laid out yet
@@ -64,13 +78,22 @@ function fit() {
     bottom: parseFloat(cs.paddingBottom) || 0,
   };
   const key = `${w}x${vh}:${safe.top}:${safe.bottom}`;
-  if (key === lastSize) return;
-  lastSize = key;
-  stage.style.width = `${w}px`;
-  stage.style.height = `${vh}px`;
-  canvas.style.width = `${w}px`;
-  canvas.style.height = `${vh}px`;
-  game.layout(w, vh, safe);
+  if (`${key}:${vw}` === lastWide) return;
+  lastWide = `${key}:${vw}`;
+  const left = Math.floor((vw - w) / 2);
+  stage.classList.add('placed');
+  stage.style.left = `${left}px`;
+  if (key !== lastSize) {
+    lastSize = key;
+    stage.style.width = `${w}px`;
+    stage.style.height = `${vh}px`;
+    canvas.style.width = `${w}px`;
+    canvas.style.height = `${vh}px`;
+    game.layout(w, vh, safe);
+  }
+  backdrop.style.width = `${vw}px`;
+  backdrop.style.height = `${vh}px`;
+  game.layoutBackdrop(backdrop, vw, left);
 }
 
 let pending = false;

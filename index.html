@@ -20,8 +20,13 @@
   <link rel="modulepreload" href="js/board.js">
   <link rel="modulepreload" href="js/art.js">
   <link rel="modulepreload" href="js/ui.js">
+  <link rel="modulepreload" href="js/riders.js">
+  <link rel="modulepreload" href="js/shop.js">
+  <link rel="modulepreload" href="js/hud.js">
+  <link rel="modulepreload" href="js/icons.js">
 </head>
 <body>
+  <canvas id="backdrop" aria-hidden="true" hidden></canvas>
   <div id="stage"><canvas id="game"></canvas></div>
   <div id="ui"></div>
   <div id="safe-probe"></div>
@@ -36,9 +41,9 @@
         <div class="sp-row"><span class="sp-t">M</span><span class="sp-t">A</span><span class="sp-t">T</span><span class="sp-t">C</span><span class="sp-t">H</span></div>
       </div>
       <div class="sp-pair">
-        <span class="sp-t sp-a">💖</span><span class="sp-t sp-b">💖</span>
+        <span class="sp-t sp-a"></span><span class="sp-t sp-b"></span>
         <div class="sp-burst"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-        <span class="sp-heart">💕</span>
+        <span class="sp-heart"></span>
       </div>
       <p class="sp-sub">made for you</p>
       <div class="sp-road"></div>

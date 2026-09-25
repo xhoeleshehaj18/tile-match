@@ -1,9 +1,13 @@
 // The opening animation (markup in index.html, motion in style.css). It already plays and fades
-// by itself; this adds the girl and her house, tap-to-skip, and a replay when she comes back to
-// the game after a while (iOS usually resumes a Home Screen app instead of starting it again).
+// by itself; this adds the rider (whoever she picked in the shop) and her house, tap-to-skip, and
+// a replay when she comes back to the game after a while (iOS usually resumes a Home Screen app
+// instead of starting it again).
 
 import * as Art from './art.js';
 import { isChinese } from './i18n.js';
+import { iconEl, rich } from './icons.js';
+import { riderFrame } from './riders.js';
+import { shop } from './shop.js';
 
 const el = document.getElementById('splash');
 const AWAY = 10 * 60e3; // back after this long counts as opening the game again
@@ -19,9 +23,9 @@ function paintArt() {
     canvas.style.height = `${canvas.h}px`;
     el.querySelector(selector).replaceChildren(canvas);
   };
-  put('.sp-bob', Art.girl(sw * 0.24));
+  put('.sp-bob', riderFrame(shop.rider, sw * 0.24));
   put('.sp-home', Art.house(sw * 0.2));
-  el.querySelector('.sp-sub').textContent = isChinese() ? '送给你 💕' : 'made for you 💕';
+  el.querySelector('.sp-sub').replaceChildren(rich(isChinese() ? '送给你 {hearts}' : 'made for you {hearts}'));
 }
 
 function play() {
@@ -55,6 +59,11 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
+// the two heart tiles that match, the sparks and little hearts they burst into, and the pair
+// of hearts that floats up
+for (const t of el.querySelectorAll('.sp-pair .sp-t')) t.replaceChildren(iconEl('heart'));
+el.querySelectorAll('.sp-burst i').forEach((i, k) => i.replaceChildren(iconEl(k % 2 ? 'heart' : 'spark')));
+el.querySelector('.sp-heart').replaceChildren(iconEl('hearts'));
 paintArt();
 
 // An update reload right after opening would otherwise play the whole scene a second time.

@@ -12,6 +12,10 @@ import { puzzle } from './puzzle.js';
 import { VERSION } from './version.js';
 import { photos } from './photos.js';
 import * as report from './report.js';
+import { riderFrames, Trail } from './riders.js';
+import { paintedFrames, pickFrame } from './painted.js';
+import * as Hud from './hud.js';
+import { shop, levelCoins, challengeCoins } from './shop.js';
 
 // Board size per mode. Big was chosen by rendering 11×15 up to 14×20 on phone-sized screens: at
 // 12×17 a tile is still ~30 pt on a standard iPhone (about the size of body-text emoji), and one
@@ -74,6 +78,7 @@ const EASE = {
   out: t => 1 - (1 - t) * (1 - t) * (1 - t),
   in: t => t * t * t,
   inOut: t => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2),
+  back: t => 1 + 2.70158 * Math.pow(t - 1, 3) + 1.70158 * Math.pow(t - 1, 2),
 };
 
 /** Piecewise-linear keyframes: [[duration, value], ...] from `start`. Returns null once finished. */
@@ -210,7 +215,13 @@ export class Game {
     this.comboFx = null;
     this.bands = null;
     this.girl = { x: 0, alpha: 1 };
+    this.hopT0 = -1;
+    this.hopH = 0;
+    this.fevers = 0;
+    this.shownCoins = shop.coins;
+    this.coinFx = null;
     this.built = false;
+    shop.onChange(() => this.refreshShop());
     this.loadState();
 
     this.bindInput();
@@ -251,6 +262,8 @@ export class Game {
       store.set(this.key('since'), this.level + (localStorage.getItem(this.key('board')) && this.level > 5 ? 1 : 0));
     }
     this.since = store.int(this.key('since'), 1);
+    // Challenge pays coins for its score as the game ends; a second chance pays only what it adds
+    this.paidScore = store.int(this.key('paidScore'));
     this.lostPending = false;
     this.bestAtStart = Stats.best;
   }
@@ -274,6 +287,7 @@ export class Game {
       store.set(this.key('boardTotal'), this.levelTileTotal);
       store.set(this.key('time'), Math.round(this.playTime));
       store.set(this.key('bestCombo'), this.bestCombo);
+      store.set(this.key('fevers'), this.fevers);
       if (this.mode === 'daily') store.set('daily.date', this.dailyDate);
     }
   }
@@ -292,6 +306,7 @@ export class Game {
     this.playTime = store.int(this.key('time'));
     this.clockOn = this.playTime > 0;
     this.bestCombo = store.int(this.key('bestCombo'));
+    this.fevers = store.int(this.key('fevers'));
     this.resetCombo();
     this.updateScore(false);
     this.after(1.2, () => this.checkBoard(), 'check');
@@ -324,6 +339,38 @@ export class Game {
   cancelTimer(key) { this.timers = this.timers.filter(t => t.key !== key); }
 
   // ------------------------------------------------------------ layout
+
+  /**
+   * Wide screens (tablets, computers): the sky, sea, road and grass carry on past the column to the
+   * edges, on a canvas of their own behind it. `left` is where the column starts on it.
+   */
+  layoutBackdrop(canvas, width, left) {
+    this.backdrop = null;
+    canvas.hidden = width <= this.W;
+    if (canvas.hidden) { canvas.width = canvas.height = 1; return; }
+    canvas.width = Math.round(width * DPR);
+    canvas.height = Math.round(this.H * DPR);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.fillStyle = Art.C.grass;
+    ctx.fillRect(0, 0, width, this.H);
+    const r = this.roadRect;
+    // the sun and the sea's sparkle sit in the middle, behind the column
+    Art.drawBackdrop(ctx, width, r.y + r.h, r.y, this.s);
+    const period = this.dashPeriod;
+    this.backdrop = { canvas, ctx, width, left, dashes: Art.roadDashes(width + period * 2, period, this.s) };
+  }
+
+  /** The backdrop's road markings, scrolled to line up with the column's. */
+  drawBackdrop(off) {
+    const { ctx, width, left, dashes } = this.backdrop;
+    const P = this.dashPeriod, y = this.dashY - dashes.h / 2;
+    ctx.fillStyle = '#4B4948';
+    ctx.fillRect(0, y - 1, width, dashes.h + 2);
+    // the column draws a dash at -off + kP; on the backdrop that's left - off + kP
+    const x = left - off - Math.ceil((left - off) / P) * P;
+    ctx.drawImage(dashes, x, y, dashes.w, dashes.h);
+  }
 
   layout(width, height, safe) {
     const W = width, H = height;
@@ -366,7 +413,8 @@ export class Game {
     this.dashY = roadBottom - 22 * s;
     this.roadRect = { y: roadBottom - roadHeight, h: roadHeight };
 
-    this.girlSprite = Art.girl(132 * s);
+    this.riderH = 132 * s;
+    this.makeRider();
     this.girlHomeX = 138 * s;
     this.girlBottom = roadBottom - 12 * s;
     this.girlGoalX = this.houseX - this.houseW * 0.45;
@@ -420,15 +468,23 @@ export class Game {
     // HUD
     const topY = Math.max(safe.top, 14 * s) + 34 * s;
     this.topY = topY;
-    this.gear = { x: 40 * s, y: topY, sprite: Art.gearButton(54 * s), scale: 1, pressT0: -1 };
+    this.buttonSize = 56 * s;
+    this.gear = { x: 40 * s, y: topY, sprite: Hud.button(this.buttonSize, 'pause'), scale: 1, pressT0: -1 };
+    this.shopBtn = { x: 168 * s, y: topY, sprite: Hud.button(this.buttonSize, 'bag'), pressT0: -1 };
+    this.coinLeft = this.shopBtn.x + this.buttonSize / 2 + 6 * s;
+    this.coinSprite = null;
+    this.coinText = '';
+    this.coinPopT0 = -1;
+    this.flyCoin = Hud.icon('coin', 26 * s);
+    this.updateCoins();
     this.dailyBtn = { x: 104 * s, y: topY, sprite: null, day: 0, pressT0: -1 };
     this.refreshDailyButton();
-    this.dotSprite = Art.dot(18 * s);
+    this.dotSprite = Hud.dot(15 * s);
     const bW = 114 * s, bH = 86 * s;
     const buttonY = H - (safe.bottom * 0.5 + (bottomH - safe.bottom * 0.5) / 2);
-    this.hintBtn = { x: W * 0.338, y: buttonY, w: bW, h: bH, sprite: Art.powerButton(bW, bH, 'hint', s), alpha: 1, pressT0: -1, popT0: -1, attention: false, attT0: 0 };
-    this.shuffleBtn = { x: W * 0.66, y: buttonY, w: bW, h: bH, sprite: Art.powerButton(bW, bH, 'shuffle', s), alpha: 1, pressT0: -1, popT0: -1, attention: false, attT0: 0 };
-    this.versionSprite = Art.pill(`v${VERSION}`, 20 * s, { color: 'rgba(255,255,255,0.8)', bg: 'rgba(0,0,0,0.18)', fontScale: 0.62, radius: 0.5, pad: 0.8 });
+    this.hintBtn = { x: W * 0.338, y: buttonY, w: bW, h: bH, sprite: Hud.bigButton(bW, bH, 'bulb'), alpha: 1, pressT0: -1, popT0: -1, attention: false, attT0: 0 };
+    this.shuffleBtn = { x: W * 0.66, y: buttonY, w: bW, h: bH, sprite: Hud.bigButton(bW, bH, 'shuffle'), alpha: 1, pressT0: -1, popT0: -1, attention: false, attT0: 0 };
+    this.versionSprite = Hud.label(`v${VERSION}`, 18 * s);
     this.versionPos = { x: 10 * s + this.versionSprite.w / 2, y: H - Math.max(safe.bottom * 0.6, 8 * s) - this.versionSprite.h / 2 };
     this.badgeSprites = new Map();
     this.toastSprites = new Map();
@@ -474,7 +530,7 @@ export class Game {
     if (typeof createImageBitmap !== 'function') return;
     const gen = (this.spriteGen = (this.spriteGen ?? 0) + 1);
     const lift = c => createImageBitmap(c).then(b => { b.w = c.w; b.h = c.h; return b; });
-    const fields = ['bg', 'tileSprite', 'tileLitSprite', 'tileFlashSprite', 'dashes', 'girlSprite', 'leafSprite', 'sparkleSprite', 'glowSprite', 'ringSprite',
+    const fields = ['bg', 'tileSprite', 'tileLitSprite', 'tileFlashSprite', 'dashes', 'leafSprite', 'sparkleSprite', 'glowSprite', 'ringSprite',
       'stoneSprite', 'ice1Sprite', 'ice2Sprite', 'giftSprite'];
     Promise.all([...fields.map(f => lift(this[f])), ...this.emojiSprites.map(lift)])
       .then(list => {
@@ -483,6 +539,114 @@ export class Game {
         this.emojiSprites = list.slice(fields.length);
       })
       .catch(() => {});
+  }
+
+  // ------------------------------------------------------------ the rider and the shop
+
+  /**
+   * The rider she has chosen in the shop, in all its frames, and the trail behind it. The drawn
+   * frames show at once; an animal's watercolour frames replace them as soon as they've loaded.
+   */
+  makeRider() {
+    const id = shop.rider, trail = shop.trail, h = this.riderH;
+    if (this.riderKey !== `${id}:${h}`) {
+      this.riderKey = `${id}:${h}`;
+      this.riderId = id;
+      this.riderSprites = riderFrames(id, h);
+      const key = this.riderKey;
+      const use = frames => {
+        if (this.riderKey !== key) return;
+        this.riderSprites = frames;
+        if (typeof createImageBitmap !== 'function') return;
+        Promise.all(frames.map(c => createImageBitmap(c).then(b => { b.w = c.w; b.h = c.h; return b; })))
+          .then(list => { if (this.riderKey === key && this.riderSprites === frames) this.riderSprites = list; })
+          .catch(() => {});
+      };
+      use(this.riderSprites);
+      paintedFrames(id, h).then(frames => frames && use(frames)).catch(() => {});
+    }
+    if (!this.trail || this.trail.id !== trail || this.trail.s !== this.s) {
+      this.trail = trail === 'none' ? null : new Trail(trail, this.s);
+    }
+  }
+
+  /** Coins or the equipped items changed (a purchase, a reward): catch the scene up. */
+  refreshShop() {
+    if (!this.built) return;
+    const before = this.riderId;
+    this.makeRider();
+    if (this.riderId !== before) this.hop(1.4);
+    // coins going down (spent) show at once; coins coming in fly in once the panels are closed
+    if (shop.coins < this.shownCoins) { this.shownCoins = shop.coins; this.updateCoins(); }
+  }
+
+  /** A happy little jump on the scooter: on a good combo, a new rider, a cleared board. */
+  hop(strength = 1) {
+    if (REDUCED_MOTION) return;
+    this.hopT0 = now();
+    this.hopH = 9 * this.s * strength;
+  }
+
+  updateCoins(animated = false) {
+    const text = Math.round(this.shownCoins).toLocaleString();
+    if (text !== this.coinText) {
+      this.coinText = text;
+      this.coinSprite = Hud.pill(`{coin}${text}`, 34 * this.s, { reuse: this.coinSprite, iconScale: 0.86 });
+    }
+    if (animated) this.coinPopT0 = now();
+  }
+
+  /**
+   * New coins are shown arriving: a handful of coins arc from the rider into the counter, which
+   * counts up as they land. Waits until nothing is covering the scene.
+   */
+  flyCoinsIn(t) {
+    const gain = shop.coins - this.shownCoins;
+    // Held while a won board's result is on its way, so they're counted in after she's seen it.
+    if (gain <= 0 || this.coinFx || this.ui.anyOpen || this.ui.breakKind) return;
+    if (this.timers.some(t => t.key === 'win')) return;
+    const from = { x: this.girl.x, y: this.girlBottom - this.riderH * 0.55 };
+    const to = { x: this.coinLeft + 17 * this.s, y: this.shopBtn.y - 2 * this.s };
+    const n = Math.max(3, Math.min(10, Math.round(gain / 12)));
+    const coins = [];
+    for (let i = 0; i < n; i++) {
+      coins.push({
+        t0: t + 0.15 + i * 0.07,
+        x0: from.x + rand(-18, 18) * this.s, y0: from.y + rand(-12, 12) * this.s,
+        lift: rand(40, 90) * this.s, spin: rand(-6, 6),
+      });
+    }
+    this.coinFx = { from: this.shownCoins, to: shop.coins, coins, target: to, n, landed: 0 };
+  }
+
+  drawCoinsIn(t) {
+    const fx = this.coinFx;
+    if (!fx) return;
+    const DUR = 0.55;
+    for (const c of fx.coins) {
+      const a = (t - c.t0) / DUR;
+      if (a < 0) continue;
+      if (a >= 1) {
+        if (!c.done) {
+          c.done = true;
+          fx.landed++;
+          this.shownCoins = fx.from + ((fx.to - fx.from) * fx.landed) / fx.n;
+          this.updateCoins(true);
+          sound.tick(0.3);
+          if (fx.landed === 1) sound.play('tap', { rate: 1.6, gain: 0.5 });
+        }
+        continue;
+      }
+      const e = EASE.inOut(a);
+      const x = c.x0 + (fx.target.x - c.x0) * e;
+      const y = c.y0 + (fx.target.y - c.y0) * e - c.lift * Math.sin(Math.PI * a);
+      this.drawAt(this.flyCoin, x, y, c.spin * a, 1 - 0.25 * a, a < 0.1 ? a * 10 : 1);
+    }
+    if (fx.landed >= fx.n) {
+      this.coinFx = null;
+      this.shownCoins = shop.coins;
+      this.updateCoins(true);
+    }
   }
 
   point(p) { return { x: this.gridLeft + (p.c + 0.5) * this.cell, y: this.gridTop + (p.r + 0.5) * this.cell }; }
@@ -501,7 +665,7 @@ export class Game {
 
   badge(text) {
     let b = this.badgeSprites.get(text);
-    if (!b) this.badgeSprites.set(text, (b = Art.badge(text, 32 * this.s)));
+    if (!b) this.badgeSprites.set(text, (b = Hud.badge(text, 30 * this.s)));
     return b;
   }
 
@@ -517,26 +681,25 @@ export class Game {
     const day = new Date().getDate();
     if (this.dailyBtn.day === day) return;
     this.dailyBtn.day = day;
-    this.dailyBtn.sprite = Art.calendarButton(54 * this.s, day);
+    this.dailyBtn.sprite = Hud.button(this.buttonSize, 'calendar', { day });
   }
 
   updateScore(animated = true) {
     const s = this.s;
     this.refreshDailyButton();
     const levels = this.relaxed;
-    this.scoreSprite = levels
-      ? Art.pill(this.mode === 'daily' ? L.dailyPill() : L.level(this.level), 38 * s, { reuse: this.scoreSprite })
-      : Art.scorePill(this.score.toLocaleString(), 38 * s, this.scoreSprite);
+    this.scoreSprite = Hud.pill(levels ? (this.mode === 'daily' ? L.dailyPill() : L.level(this.level)) : `{star}${this.score.toLocaleString()}`,
+      42 * s, { reuse: this.scoreSprite });
     this.dailyDot = Daily.best(todayKey()) === 0;
     this.updateInfo();
     if (levels) {
       this.bestSprite = null;
     } else {
       let text = L.best(Math.max(Stats.best, this.score).toLocaleString());
-      if (Stats.streak > 0) text += `   🔥 ${Stats.streak}`;
+      if (Stats.streak > 0) text += `  {flame}${Stats.streak}`;
       if (text !== this.bestText) {
         this.bestText = text;
-        this.bestCanvas = Art.pill(text, 23 * s, { color: '#FFE14A', bg: 'rgba(13,13,13,0.75)', fontScale: 0.66, radius: 0.39, pad: 0.7, reuse: this.bestCanvas });
+        this.bestCanvas = Hud.pill(text, 28 * s, { fontScale: 0.48, reuse: this.bestCanvas });
       }
       this.bestSprite = this.bestCanvas;
     }
@@ -547,19 +710,19 @@ export class Game {
     this.updateScore(false);
   }
 
-  /** The clock and combo goal under the level: "⏱ 3:12   ⚡ 4/8   ↓". Redrawn only when it changes. */
+  /** The clock and combo goal under the level: "{clock} 3:12  {bolt} 4/8  {arrowDown}". Redrawn only when it changes. */
   updateInfo() {
     const r = this.rules;
     if (!this.relaxed || !r.par || !this.built) { this.infoSprite = null; this.infoKey = ''; return; }
     const left = Math.max(0, Math.ceil(r.par - this.playTime));
     const done = this.bestCombo >= r.comboGoal;
-    let text = `⏱ ${clock(left)}   ⚡ ${Math.min(this.bestCombo, r.comboGoal)}/${r.comboGoal}${done ? ' ✓' : ''}`;
-    if (r.gravity) text += `   ${arrowOf(r.gravity)}`;
-    const color = left === 0 ? '#A0A0A0' : left <= 20 ? '#FF9A6B' : '#FFFFFF';
+    let text = `{clock}${clock(left)}  {bolt}${Math.min(this.bestCombo, r.comboGoal)}/${r.comboGoal}${done ? '{check}' : ''}`;
+    if (r.gravity) text += ` ${arrowOf(r.gravity)}`;
+    const color = left === 0 ? '#A39A8C' : left <= 20 ? '#E8502F' : Hud.TEXT;
     const key = text + color;
     if (key === this.infoKey) return;
     this.infoKey = key;
-    this.infoCanvas = Art.pill(text, 25 * this.s, { color, bg: 'rgba(13,13,13,0.75)', fontScale: 0.62, radius: 0.39, pad: 0.8, reuse: this.infoCanvas });
+    this.infoCanvas = Hud.pill(text, 28 * this.s, { color, fontScale: 0.48, reuse: this.infoCanvas });
     this.infoSprite = this.infoCanvas;
   }
 
@@ -573,6 +736,8 @@ export class Game {
       this.shuffles = START_SHUFFLES;
       this.secondChanceUsed = false;
       this.score = 0;
+      this.paidScore = 0;
+      store.set(this.key('paidScore'), 0);
       this.bestAtStart = Stats.best;
     }
     this.lostPending = false;
@@ -589,6 +754,7 @@ export class Game {
     this.hintArrow = null;
     this.resetCombo();
     this.bestCombo = 0;
+    this.fevers = 0;
     this.playTime = 0;
     this.clockOn = false;
     this.dailyDate = todayKey();
@@ -1007,6 +1173,8 @@ export class Game {
     }
     if (css !== this.stageCss) {
       this.canvas.style.transform = css;
+      // the backdrop shakes along, so the road still lines up at the column's edges
+      if (this.backdrop) this.backdrop.canvas.style.transform = css;
       this.stageCss = css;
     }
   }
@@ -1128,8 +1296,19 @@ export class Game {
     if (this.hit(this.gear, pt, gearSize + 16 * this.s, gearSize + 16 * this.s)) {
       this.gear.pressT0 = now();
       sound.play('tap');
-      report.note('settings');
-      this.ui.openSettings();
+      report.note('menu');
+      this.ui.openMenu('play');
+      return;
+    }
+    // the shop button and the coin counter beside it
+    const sb = this.shopBtn;
+    const coinW = this.coinSprite ? this.coinSprite.w + 10 * this.s : 0;
+    if (pt.y > sb.y - gearSize / 2 - 8 * this.s && pt.y < sb.y + gearSize / 2 + 8 * this.s &&
+        pt.x > sb.x - gearSize / 2 - 6 * this.s && pt.x < sb.x + gearSize / 2 + coinW) {
+      sb.pressT0 = now();
+      sound.play('tap');
+      report.note('shop');
+      this.ui.openMenu('shop');
       return;
     }
     if (this.hit(this.dailyBtn, pt, gearSize + 12 * this.s, gearSize + 16 * this.s)) {
@@ -1489,6 +1668,7 @@ export class Game {
     sound.clear(this.combo);
     sound.buzz(18);
     if (this.combo >= 2) this.showCombo(this.combo);
+    if (this.combo >= 3 && this.combo % 2 === 1) this.hop(inFever ? 1.3 : 0.8);
     if (inFever) this.feverUntil = Math.min(this.feverT0 + FEVER_MAX, this.feverUntil + 0.8);
     else if (this.combo >= this.nextFever && !this.board.isEmpty) this.startFever(t);
     if (this.combo % COMBO_PRIZE === 0) {
@@ -1507,7 +1687,7 @@ export class Game {
     if (this.mode === 'challenge') {
       const points = 10 * Math.min(this.combo, 10) * (t < this.feverUntil ? 2 : 1);
       if (this.bestAtStart > 0 && this.score <= this.bestAtStart && this.score + points > this.bestAtStart) {
-        this.toast(L.newBest() + ' 🎉');
+        this.toast(`${L.newBest()} {sparkle}`, 'pink');
       }
       this.score += points;
       this.save();
@@ -1583,11 +1763,18 @@ export class Game {
   }
 
   startFever(t) {
+    this.fevers++;
+    this.hop(1.5);
     this.feverT0 = t;
     this.feverUntil = t + FEVER_TIME;
     this.feverHints = FEVER_HINTS;
     this.nextFever = this.combo + FEVER_AGAIN;
-    this.feverCanvas = Art.outlinedText([{ text: L.fever(), size: 64 * this.s, weight: 900, color: '#FF4FB8', italic: true }], 0.2, this.feverCanvas);
+    const s = this.s;
+    this.feverCanvas = Hud.bigText([
+      { icon: 'sparkle', size: 40 * s },
+      { text: L.fever(), size: 62 * s, ...Hud.INKS.pink, italic: true },
+      { icon: 'sparkle', size: 40 * s },
+    ], { reuse: this.feverCanvas });
     this.feverFx = { sprite: this.feverCanvas, t0: t };
     sound.play('win', { gain: 0.55, rate: 1.25 });
     sound.buzz(30);
@@ -1781,7 +1968,7 @@ export class Game {
   showPoints(n, x, y) {
     let sprite = this.pointSprites.get(n);
     if (!sprite) {
-      sprite = Art.outlinedText([{ text: `+${n}`, size: 26 * this.s, weight: 900, color: '#FFE14A' }]);
+      sprite = Hud.bigText([{ text: `+${n}`, size: 26 * this.s, ...Hud.INKS.gold }]);
       this.pointSprites.set(n, sprite);
     }
     const cell = this.cell;
@@ -1794,16 +1981,18 @@ export class Game {
 
   showCombo(n) {
     const size = 38 * this.s;
-    this.comboCanvas = Art.outlinedText([
-      { text: String(n), size, weight: 900, color: '#FF4FB8', italic: true },
-      { text: L.combo(), size: size * 0.42, weight: 800, color: '#FFFFFF', italic: true },
-    ], 0.2, this.comboCanvas);
+    this.comboCanvas = Hud.bigText([
+      { text: String(n), size, ...Hud.INKS.pink, italic: true },
+      { text: L.combo(), size: size * 0.46, ...Hud.INKS.white, italic: true },
+    ], { reuse: this.comboCanvas });
     this.comboFx = { sprite: this.comboCanvas, t0: now() };
   }
 
-  toast(text) {
-    let sprite = this.toastSprites.get(text);
-    if (!sprite) this.toastSprites.set(text, (sprite = Art.pill(text, 44 * this.s)));
+  /** A message over the middle of the board for a few seconds (`look` 'pink' for good news). */
+  toast(text, look = 'cream') {
+    const key = `${look}:${text}`;
+    let sprite = this.toastSprites.get(key);
+    if (!sprite) this.toastSprites.set(key, (sprite = Hud.pill(text, 48 * this.s, { look: Hud.LOOK[look], fontScale: 0.42 })));
     this.toastSprite = { sprite, t0: now() };
   }
 
@@ -1936,6 +2125,7 @@ export class Game {
 
   win() {
     this.finishing = true;
+    this.hop(1.6);
     sound.play('win');
     sound.buzz(40);
     this.anim.to(this.girl, { x: this.girlGoalX }, 0.8, {
@@ -1962,6 +2152,7 @@ export class Game {
     this.save();
     this.updateScore();
     const result = this.makeResult(true, newBest);
+    result.coins = this.payChallenge(true);
     result.puzzle = puzzle.award(2);
     this.after(1.7, () => this.ui.showResult(result), 'win');
   }
@@ -1984,7 +2175,13 @@ export class Game {
       prize.pieces += 1;
       prize.chest = true;
     }
+    const firstToday = daily && Daily.best(this.dailyDate) === 0;
     if (daily) prize.pieces = Daily.record(this.dailyDate, stars);
+    const coins = levelCoins({
+      stars, bestCombo: this.bestCombo, fevers: this.fevers, level: this.level, milestone: r.milestone,
+      big: this.mode === 'big', daily, newStars: daily ? prize.pieces : 0, streak: Daily.streak, firstToday,
+    });
+    shop.add(coins.total);
     this.hints += prize.hints;
     this.shuffles += prize.shuffles;
     const cleared = this.level;
@@ -1992,11 +2189,11 @@ export class Game {
     this.save();
     this.updateBadges();
     if (daily) this.dailyDot = false;
-    report.note('WON', `${this.mode} ${daily ? this.dailyDate : 'level ' + cleared} ${stars}* ${Math.round(this.playTime)}s/${r.par} combo${this.bestCombo}/${r.comboGoal}`);
+    report.note('WON', `${this.mode} ${daily ? this.dailyDate : 'level ' + cleared} ${stars}* ${Math.round(this.playTime)}s/${r.par} combo${this.bestCombo}/${r.comboGoal} +${coins.total}c`);
     return {
       won: true, level: cleared, daily, date: this.dailyDate, theme: r.theme, stars, timeOk, comboOk,
       time: Math.round(this.playTime), par: r.par, bestCombo: this.bestCombo, comboGoal: r.comboGoal,
-      prize, puzzle: puzzle.award(prize.pieces), streak: daily ? Daily.streak : 0, best: daily ? Daily.best(this.dailyDate) : 0,
+      prize, coins, puzzle: puzzle.award(prize.pieces), streak: daily ? Daily.streak : 0, best: daily ? Daily.best(this.dailyDate) : 0,
     };
   }
 
@@ -2010,7 +2207,18 @@ export class Game {
     const newBest = Stats.submit(this.score);
     this.updateScore(false);
     const result = this.makeResult(false, newBest);
+    result.coins = this.payChallenge(false);
     this.after(1.0, () => this.ui.showResult(result), 'win');
+  }
+
+  /** Coins for the Challenge score so far (less whatever an earlier ending of this game paid). */
+  payChallenge(won) {
+    const coins = challengeCoins(this.score - this.paidScore, won);
+    this.paidScore = this.score;
+    store.set(this.key('paidScore'), this.paidScore);
+    shop.add(coins.total);
+    report.note('coins', `+${coins.total} = ${shop.coins}`);
+    return coins;
   }
 
   makeResult(won, newBest) {
@@ -2027,6 +2235,7 @@ export class Game {
       mode: this.mode, level: this.level, score: this.score, best: Stats.best,
       tiles: b.tileCount, total: this.levelTileTotal, hasMove: b.hasMove,
       hints: this.hints, shuffles: this.shuffles, secondChanceUsed: this.secondChanceUsed,
+      coins: shop.coins, earned: shop.earned, rider: shop.rider, trail: shop.trail,
       busy: this.busy, finishing: this.finishing, pointer: this.pointerId,
       drag: this.drag ? (this.drag.horizontal ? 'horizontal' : 'vertical') : 'none',
       selected: this.selected ? `${this.selected.c},${this.selected.r}` : 'none',
@@ -2286,13 +2495,26 @@ export class Game {
     // scrolling road markings
     const off = ((t * this.dashPeriod) / 0.45) % this.dashPeriod;
     ctx.drawImage(this.dashes, -off, this.dashY - this.dashes.h / 2, this.dashes.w, this.dashes.h);
+    if (this.backdrop) this.drawBackdrop(off);
 
-    // girl, bobbing on her scooter
-    const bob = -1.6 * s * 0.5 * (1 - Math.cos((TAU * t) / 0.44));
-    const g = this.girlSprite;
+    // the rider, bobbing on the scooter (and hopping when she's pleased), trail first so it's behind
+    let bob = -1.6 * s * 0.5 * (1 - Math.cos((TAU * t) / 0.44));
+    if (this.hopT0 >= 0) {
+      const a = (t - this.hopT0) / 0.34;
+      if (a >= 1) this.hopT0 = -1;
+      else bob -= this.hopH * 4 * a * (1 - a);
+    }
+    const g = pickFrame(this.riderSprites, this.riderId, t);
+    if (this.trail) {
+      // from the rider's own size, not the sprite's (painted frames have room around the drawing)
+      const drift = this.dashPeriod / 0.45;
+      this.trail.update(t, this.girl.x - this.riderH * 0.3, this.girlBottom - this.riderH * 0.3 + bob, drift, this.girl.alpha > 0.5 && !this.ui.anyOpen);
+      this.trail.draw(ctx, t, DPR);
+    }
     if (this.girl.alpha > 0.001) {
       ctx.globalAlpha = this.girl.alpha;
       ctx.drawImage(g, this.girl.x - g.w / 2, this.girlBottom - g.h + bob, g.w, g.h);
+      ctx.globalAlpha = 1;
     }
 
     // Everything from here to the HUD is the board layer, and the knock of a clear moves all of it
@@ -2389,6 +2611,18 @@ export class Game {
     const gearPress = this.gear.pressT0 >= 0 ? segments(PRESS, t - this.gear.pressT0, 1) : null;
     if (gearPress === null) this.gear.pressT0 = -1;
     this.drawAt(this.gear.sprite, this.gear.x, this.gear.y, 0, gearPress ?? 1, 1);
+    const shopPress = this.shopBtn.pressT0 >= 0 ? segments(PRESS, t - this.shopBtn.pressT0, 1) : null;
+    if (shopPress === null) this.shopBtn.pressT0 = -1;
+    this.drawAt(this.shopBtn.sprite, this.shopBtn.x, this.shopBtn.y, 0, shopPress ?? 1, 1);
+    let coinPop = 1;
+    if (this.coinPopT0 >= 0) {
+      const v = segments(POP, t - this.coinPopT0, 1);
+      if (v === null) this.coinPopT0 = -1; else coinPop = v;
+    }
+    const cs = this.coinSprite;
+    this.drawAt(cs, this.coinLeft + cs.w / 2, this.shopBtn.y - 2 * s, 0, coinPop, 1);
+    this.flyCoinsIn(t);
+    this.drawCoinsIn(t);
     const dailyPress = this.dailyBtn.pressT0 >= 0 ? segments(PRESS, t - this.dailyBtn.pressT0, 1) : null;
     if (dailyPress === null) this.dailyBtn.pressT0 = -1;
     this.drawAt(this.dailyBtn.sprite, this.dailyBtn.x, this.dailyBtn.y, 0, dailyPress ?? 1, 1);
@@ -2404,17 +2638,17 @@ export class Game {
       if (v === null) this.scorePopT0 = -1; else popScale = v;
     }
     const sp = this.scoreSprite;
-    this.drawAt(sp, this.W - 22 * s - sp.w / 2, this.topY, 0, popScale, 1);
+    this.drawAt(sp, this.W - 18 * s - sp.w / 2, this.topY - 2 * s, 0, popScale, 1);
     if (this.bestSprite) {
       const b = this.bestSprite;
-      this.drawAt(b, this.W - 22 * s - b.w / 2, this.topY + 24 * s + b.h / 2, 0, 1, 1);
+      this.drawAt(b, this.W - 18 * s - b.w / 2, this.topY + 21 * s + b.h / 2, 0, 1, 1);
     }
     if (this.infoSprite) {
       const b = this.infoSprite;
       const left = this.rules.par - this.playTime;
       // the last ten seconds tick
       const tick = left > 0 && left <= 10 && this.clockOn ? 1 + 0.08 * Math.max(0, Math.cos(TAU * (left % 1))) : 1;
-      this.drawAt(b, this.W - 22 * s - b.w / 2, this.topY + 24 * s + b.h / 2, 0, tick, 1);
+      this.drawAt(b, this.W - 18 * s - b.w / 2, this.topY + 21 * s + b.h / 2, 0, tick, 1);
     }
 
     this.drawAt(this.versionSprite, this.versionPos.x, this.versionPos.y, 0, 1, 1);
@@ -2439,13 +2673,9 @@ export class Game {
         const frac = fever
           ? (this.feverUntil - t) / (this.feverUntil - this.feverT0)
           : Math.max(0, 1 - since / COMBO_WINDOW);
-        const mw = 104 * s, mh = 8 * s, mx = right - 6 * s - mw, my = y + sp2.h / 2 - 2 * s;
-        ctx.globalAlpha = alpha * 0.6;
-        ctx.fillStyle = '#0D0D0D';
-        ctx.fillRect(mx, my, mw, mh);
+        const mw = 100 * s, mh = 11 * s, mx = right - 10 * s - mw, my = y + sp2.h / 2 - 10 * s;
         ctx.globalAlpha = alpha;
-        ctx.fillStyle = fever ? '#FF4FB8' : frac < 0.3 ? '#FF6B3D' : '#FFE14A';
-        ctx.fillRect(mx + 1.5 * s, my + 1.5 * s, (mw - 3 * s) * frac, mh - 3 * s);
+        Hud.drawMeter(ctx, mx, my, mw, mh, frac, fever ? '#FF5CA8' : frac < 0.3 ? '#FF8A3D' : '#FFD23F');
         ctx.globalAlpha = 1;
       }
     }
@@ -2465,9 +2695,10 @@ export class Game {
       const a = t - this.toastSprite.t0;
       if (a > 2.95) this.toastSprite = null;
       else {
-        const alpha = a < 0.15 ? a / 0.15 : a < 2.65 ? 1 : 1 - (a - 2.65) / 0.3;
+        const alpha = a < 0.12 ? a / 0.12 : a < 2.65 ? 1 : 1 - (a - 2.65) / 0.3;
+        const pop = a < 0.3 ? 0.7 + 0.3 * EASE.back(a / 0.3) : 1;
         const b = this.boardRect;
-        this.drawAt(this.toastSprite.sprite, b.x + b.w / 2, b.y + b.h / 2, 0, 1, alpha);
+        this.drawAt(this.toastSprite.sprite, b.x + b.w / 2, b.y + b.h / 2, 0, pop, alpha);
       }
     }
     this.drawScreenFx(t);
