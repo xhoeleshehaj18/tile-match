@@ -326,8 +326,7 @@ export class Board {
   /** Tile kinds cell by cell (-1 = empty), for saving a game in progress. */
   snapshot() { return this.cells.map(t => (t ? t.kind : -1)); }
 
-  /** A saved board. Rocks, ice and gifts from an older version are gone: a rock's cell (-1) comes
-   *  back empty, and a frozen or wrapped tile comes back as a plain one. */
+  /** A saved board (see snapshot). */
   static fromSnapshot(cols, rows, kinds) {
     if (!Array.isArray(kinds) || kinds.length !== cols * rows) return null;
     const b = new Board(cols, rows);

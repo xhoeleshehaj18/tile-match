@@ -275,6 +275,13 @@ export class Game {
   restoreBoard() {
     // a daily board left over from another day is gone: today has its own
     if (this.mode === 'daily' && localStorage.getItem('daily.date') !== todayKey()) return false;
+    // A board saved before v24 with rocks, ice or gifts on it: the rocks' cells would come back as
+    // holes, so the same level is dealt again without them.
+    if (localStorage.getItem(this.key('boardFx')) !== null) {
+      store.remove(this.key('boardFx'));
+      store.remove(this.key('board'));
+      return false;
+    }
     const saved = Board.fromSnapshot(this.cols, this.rows, store.json(this.key('board')));
     if (!saved) return false;
     this.board = saved;
