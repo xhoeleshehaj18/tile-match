@@ -116,19 +116,6 @@ export function pill(text, height, { look = LOOK.cream, color = look.text, fontS
   return c;
 }
 
-/** Plain small lettering with no plate, e.g. the version in the corner. */
-export function label(text, height, color = 'rgba(255,255,255,0.8)') {
-  const font = `800 ${height * 0.62}px ${FONT}`;
-  const w = Math.ceil(textWidth(font, text) + height * 0.4);
-  const [c, ctx] = surface(w, height);
-  ctx.font = font;
-  ctx.fillStyle = color;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(text, w / 2, height / 2);
-  return c;
-}
-
 /** The count on a power button: pink with the number, or green with a plus when it's out. */
 export function badge(text, size) {
   const [c, ctx] = surface(size, size);

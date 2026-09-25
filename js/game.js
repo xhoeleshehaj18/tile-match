@@ -9,7 +9,6 @@ import { L } from './i18n.js';
 import { store, Stats, Daily, savedMode } from './store.js';
 import { levelRules, dailyRules, todayKey, CHALLENGE_RULES, GRAVITY_FROM, arrowOf } from './levels.js';
 import { puzzle } from './puzzle.js';
-import { VERSION } from './version.js';
 import { photos } from './photos.js';
 import * as report from './report.js';
 import { riderFrames, Trail } from './riders.js';
@@ -458,8 +457,6 @@ export class Game {
     const buttonY = H - (safe.bottom * 0.5 + (bottomH - safe.bottom * 0.5) / 2);
     this.hintBtn = { x: W * 0.338, y: buttonY, w: bW, h: bH, sprite: Hud.bigButton(bW, bH, 'bulb'), alpha: 1, pressT0: -1, popT0: -1, attention: false, attT0: 0 };
     this.shuffleBtn = { x: W * 0.66, y: buttonY, w: bW, h: bH, sprite: Hud.bigButton(bW, bH, 'shuffle'), alpha: 1, pressT0: -1, popT0: -1, attention: false, attT0: 0 };
-    this.versionSprite = Hud.label(`v${VERSION}`, 18 * s);
-    this.versionPos = { x: 10 * s + this.versionSprite.w / 2, y: H - Math.max(safe.bottom * 0.6, 8 * s) - this.versionSprite.h / 2 };
     this.badgeSprites = new Map();
     this.toastSprites = new Map();
     this.scorePopT0 = -1;
@@ -2346,7 +2343,6 @@ export class Game {
       this.drawAt(b, this.W - 18 * s - b.w / 2, this.topY + 21 * s + b.h / 2, 0, 1, 1);
     }
 
-    this.drawAt(this.versionSprite, this.versionPos.x, this.versionPos.y, 0, 1, 1);
     this.drawButton(this.hintBtn, t);
     this.drawButton(this.shuffleBtn, t);
 
