@@ -609,7 +609,6 @@ html.standalone .overlay { bottom: auto; height: 100lvh; }
 }
 .chunky .ic { width: 1.15em; height: 1.15em; vertical-align: -0.22em; }
 .chunky.cream { --face: var(--cream); --face-2: var(--cream-2); --edge: var(--lip); color: var(--title); text-shadow: none; }
-.chunky.armed { --face: #FF9C84; --face-2: #F2553D; --edge: #B8361F; color: #fff; text-shadow: var(--label-outline); }
 .chunky.slim { --lip-h: 0.3125rem; padding: 0.5rem 0.625rem calc(0.3125rem + var(--lip-h) + 0.15625rem); border-width: 0.15625rem; border-radius: 0.875rem; font-size: 1.0625rem; letter-spacing: 0.015em; }
 .chunky.slim { box-shadow: inset 0 0.125rem 0 rgba(255, 255, 255, 0.5), inset 0 calc(-1 * var(--lip-h)) 0 var(--edge), inset 0 calc(-1 * var(--lip-h) - 0.15625rem) 0 var(--ink); }
 .chunky.slim:active:not(:disabled) { --lip-h: 0.125rem; padding-top: 0.6875rem; }

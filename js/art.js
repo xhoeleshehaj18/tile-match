@@ -66,9 +66,6 @@ function radialGlow(ctx, cx, cy, r, inner, outer) {
 
 // ---------------------------------------------------------------- tiles
 
-// A rock: the same block as a tile, in grey stone.
-const STONE = { faceTop: '#C9C3B8', faceBottom: '#A59E92', side: '#76706A', sideDark: '#4E4A45' };
-
 export function tile(w, h, style) {
   const [c, ctx] = surface(w, h);
   const lw = Math.max(1, w * 0.035);
@@ -76,41 +73,24 @@ export function tile(w, h, style) {
   const radius = w * 0.13;
   const bx = lw / 2, by = lw / 2, bw = w - lw, bh = h - lw;
   const normal = style !== 'lit';
-  const pal = style === 'stone' ? STONE : C;
 
   rr(ctx, bx, by, bw, bh, radius);
-  ctx.fillStyle = normal ? pal.side : C.litSide;
+  ctx.fillStyle = normal ? C.side : C.litSide;
   ctx.fill();
 
   const fh = bh - side;
   ctx.save();
   rr(ctx, bx, by, bw, fh, radius);
   ctx.clip();
-  ctx.fillStyle = normal ? linear(ctx, 0, by, 0, by + fh, [[0, pal.faceTop], [1, pal.faceBottom]]) : C.lit;
+  ctx.fillStyle = normal ? linear(ctx, 0, by, 0, by + fh, [[0, C.faceTop], [1, C.faceBottom]]) : C.lit;
   ctx.fillRect(bx, by, bw, fh);
   if (normal) {
     ctx.fillStyle = 'rgba(0,0,0,0.06)';
     ctx.fillRect(bx, by + fh - side * 0.5, bw, side * 0.5);
   }
-  if (style === 'stone') {
-    // a few speckles and a crack, so it reads as rock at a glance
-    ctx.fillStyle = 'rgba(60,55,50,0.28)';
-    for (const [x, y, r] of [[0.28, 0.3, 0.05], [0.7, 0.24, 0.035], [0.62, 0.62, 0.055], [0.3, 0.68, 0.035], [0.5, 0.45, 0.025]]) {
-      ctx.beginPath();
-      ctx.arc(bx + bw * x, by + fh * y, bw * r, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.strokeStyle = 'rgba(60,55,50,0.45)';
-    ctx.lineWidth = lw * 0.7;
-    ctx.beginPath();
-    ctx.moveTo(bx + bw * 0.18, by + fh * 0.12);
-    ctx.lineTo(bx + bw * 0.34, by + fh * 0.42);
-    ctx.lineTo(bx + bw * 0.28, by + fh * 0.58);
-    ctx.stroke();
-  }
   ctx.restore();
 
-  ctx.strokeStyle = normal ? pal.sideDark : C.litSeam;
+  ctx.strokeStyle = normal ? C.sideDark : C.litSeam;
   ctx.lineWidth = lw * 0.6;
   ctx.beginPath();
   ctx.moveTo(bx + radius * 0.5, by + fh + lw * 0.2);
@@ -122,37 +102,6 @@ export function tile(w, h, style) {
   rr(ctx, bx, by, bw, fh, radius);
   ctx.stroke();
   rr(ctx, bx, by, bw, bh, radius);
-  ctx.stroke();
-  return c;
-}
-
-/** A sheet of ice over a frozen tile; thicker (and frostier) for ice that takes two cracks. */
-export function iceOverlay(w, h, layers) {
-  const [c, ctx] = surface(w, h);
-  const lw = Math.max(1, w * 0.035);
-  const bx = lw / 2, by = lw / 2, bw = w - lw, bh = h - lw;
-  const radius = w * 0.13;
-  rr(ctx, bx, by, bw, bh, radius);
-  ctx.fillStyle = linear(ctx, 0, 0, w, h, layers > 1
-    ? [[0, 'rgba(225,245,255,0.78)'], [1, 'rgba(150,205,245,0.8)']]
-    : [[0, 'rgba(215,242,255,0.55)'], [1, 'rgba(140,200,245,0.55)']]);
-  ctx.fill();
-  ctx.strokeStyle = layers > 1 ? '#3D8FD1' : '#6FB3E8';
-  ctx.lineWidth = lw * (layers > 1 ? 1.6 : 1.1);
-  rr(ctx, bx + lw * 0.6, by + lw * 0.6, bw - lw * 1.2, bh - lw * 1.2, radius * 0.9);
-  ctx.stroke();
-  // glints
-  ctx.strokeStyle = 'rgba(255,255,255,0.9)';
-  ctx.lineWidth = lw * 1.2;
-  ctx.beginPath();
-  ctx.moveTo(bx + bw * 0.18, by + bh * 0.42);
-  ctx.lineTo(bx + bw * 0.42, by + bh * 0.16);
-  ctx.moveTo(bx + bw * 0.24, by + bh * 0.58);
-  ctx.lineTo(bx + bw * 0.34, by + bh * 0.47);
-  if (layers > 1) {
-    ctx.moveTo(bx + bw * 0.62, by + bh * 0.86);
-    ctx.lineTo(bx + bw * 0.84, by + bh * 0.62);
-  }
   ctx.stroke();
   return c;
 }
@@ -508,100 +457,6 @@ export function ring(size) {
 }
 
 // ---------------------------------------------------------------- twist entrances
-
-/** A six-armed snowflake, drawn rather than an emoji (❄ renders as plain text on some phones). */
-export function snowflake(size) {
-  const [c, ctx] = surface(size, size);
-  const m = size / 2, r = size * 0.44;
-  radialGlow(ctx, m, m, m, 'rgba(210,240,255,0.55)', 'rgba(210,240,255,0)');
-  ctx.strokeStyle = '#FFFFFF';
-  ctx.lineCap = 'round';
-  ctx.lineWidth = Math.max(1, size * 0.07);
-  ctx.beginPath();
-  for (let i = 0; i < 6; i++) {
-    const a = (i / 6) * Math.PI * 2, ca = Math.cos(a), sa = Math.sin(a);
-    ctx.moveTo(m, m);
-    ctx.lineTo(m + ca * r, m + sa * r);
-    // a little V on each arm
-    const bx = m + ca * r * 0.58, by = m + sa * r * 0.58;
-    for (const s of [-1, 1]) {
-      const b = a + s * 0.7;
-      ctx.moveTo(bx, by);
-      ctx.lineTo(bx + Math.cos(b) * r * 0.32, by + Math.sin(b) * r * 0.32);
-    }
-  }
-  ctx.stroke();
-  return c;
-}
-
-/**
- * Frost over the whole screen: fog thickening toward every edge and ferns of ice growing in from
- * them, the way a cold window frosts over. Clear in the middle so the board still reads.
- */
-export function frostScreen(w, h, s) {
-  const [c, ctx] = surface(w, h);
-  let seed = 7;
-  const rand = (a = 0, b = 1) => { seed = (seed * 1664525 + 1013904223) >>> 0; return a + (seed / 4294967296) * (b - a); };
-  const edge = Math.min(w, h) * 0.3;
-  for (const [x0, y0, x1, y1] of [[0, 0, 0, edge], [0, h, 0, h - edge], [0, 0, edge, 0], [w, 0, w - edge, 0]]) {
-    const g = ctx.createLinearGradient(x0, y0, x1, y1);
-    g.addColorStop(0, 'rgba(236,248,255,0.9)');
-    g.addColorStop(0.45, 'rgba(210,236,255,0.35)');
-    g.addColorStop(1, 'rgba(190,228,255,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, w, h);
-  }
-  ctx.fillStyle = 'rgba(175,218,250,0.14)';
-  ctx.fillRect(0, 0, w, h);
-
-  // the ferns: a stem that forks and throws out side shoots, drawn as one path each
-  ctx.lineCap = 'round';
-  const branch = (x, y, ang, len, depth) => {
-    if (depth === 0 || len < 2 * s) return;
-    const x2 = x + Math.cos(ang) * len, y2 = y + Math.sin(ang) * len;
-    ctx.moveTo(x, y);
-    ctx.lineTo(x2, y2);
-    branch(x2, y2, ang + rand(-0.3, 0.3), len * 0.78, depth - 1);
-    const mx = (x + x2) / 2, my = (y + y2) / 2;
-    branch(mx, my, ang + rand(0.7, 1.1), len * 0.42, depth - 1);
-    branch(mx, my, ang - rand(0.7, 1.1), len * 0.42, depth - 1);
-  };
-  const ferns = 34;
-  for (let i = 0; i < ferns; i++) {
-    // round the four edges, bunched a little toward the corners where frost starts
-    const side = i % 4;
-    let u = rand();
-    u = u < 0.5 ? 0.5 * Math.pow(2 * u, 1.6) : 1 - 0.5 * Math.pow(2 * (1 - u), 1.6);
-    const [x, y, ang] = side === 0 ? [u * w, 0, Math.PI / 2] : side === 1 ? [u * w, h, -Math.PI / 2]
-      : side === 2 ? [0, u * h, 0] : [w, u * h, Math.PI];
-    const len = rand(14, 26) * s;
-    ctx.beginPath();
-    branch(x, y, ang + rand(-0.5, 0.5), len, 5);
-    ctx.strokeStyle = 'rgba(255,255,255,0.75)';
-    ctx.lineWidth = Math.max(1, 1.6 * s);
-    ctx.stroke();
-    ctx.strokeStyle = 'rgba(160,210,245,0.5)';
-    ctx.lineWidth = Math.max(0.6, 0.6 * s);
-    ctx.stroke();
-  }
-  return c;
-}
-
-/** A soft grey-brown puff of dust, for a rock landing. */
-export function dust(size) {
-  const [c, ctx] = surface(size, size);
-  radialGlow(ctx, size / 2, size / 2, size / 2, 'rgba(196,178,150,0.9)', 'rgba(196,178,150,0)');
-  return c;
-}
-
-/** One scrap of confetti. */
-export function confetti(size, color) {
-  const [c, ctx] = surface(size, size * 0.6);
-  rr(ctx, 0, 0, size, size * 0.6, size * 0.15);
-  ctx.fillStyle = color;
-  ctx.fill();
-  return c;
-}
 
 /** A pale streak of rushing air, pointing right; rotated for the other directions. */
 export function streak(length, thickness) {

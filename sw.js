@@ -2,8 +2,8 @@
 // background (the newest version is used from the next launch). Encrypted photos never change
 // once written, so they're cached as-is.
 
-const CACHE = 'tile-match-v23';
-const BUILD = 23;
+const CACHE = 'tile-match-v24';
+const BUILD = 24;
 const PHOTOS = 'tile-match-photos'; // kept across app updates so photos never download twice
 const APP = [
   './', 'index.html', 'style.css', 'manifest.webmanifest',

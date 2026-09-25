@@ -34,14 +34,11 @@ export const L = {
   levelsMode: () => t('Levels', '闯关'),
   challengeMode: () => t('Challenge', '挑战'),
   bigMode: () => t('Big', '超大'),
-  levelsHint: () => t('Can’t lose · new twist every 5 levels', '不会输 · 每 5 关一个新玩法'),
+  levelsHint: () => t('Can’t lose · gravity from level 5', '不会输 · 第 5 关起有重力'),
   challengeHint: () => t('Limited shuffles · you can lose', '洗牌有限 · 会输'),
   bigHint: () => t('A giant 204-tile board', '204 块超大棋盘'),
-  restartLevel: () => t('Restart Level', '重新开始'),
   newGame: () => t('New Game', '新游戏'),
   resume: () => t('Continue', '继续'),
-  confirmRestart: () => t('Tap again to restart', '再点一次重新开始'),
-  confirmNewGame: () => t('Tap again · counts as a loss', '再点一次 · 算输'),
 
   keepSafeShort: () => t('Save', '保存'),
   keepSafeTitle: () => t('Keep your progress', '保存你的进度'),
@@ -114,28 +111,18 @@ export const L = {
   // combos and fever
   fever: () => t('FEVER!', '狂热！'),
   comboPrize: n => t(`${n} combo! +1 {bulb}`, `${n} 连击！+1 {bulb}`),
-  thawed: () => t('Ice melted! {ice}', '冰化啦！{ice}'),
   gravityToast: a => t(`Gravity ${a}`, `重力 ${a}`),
 
-  // twists
+  // gravity
   newTwist: () => t('NEW TWIST', '新玩法'),
   letsGo: () => t('Let’s go!', '出发！'),
-  twistTitle: k => ({
-    stones: t('Rocks', '石头'), gravity: t('Gravity', '重力'), ice: t('Ice', '冰块'), gifts: t('Gifts', '礼物'),
-    mix: t('Double Trouble', '双重挑战'), ice2: t('Thick Ice', '厚冰'),
-  })[k] ?? '',
+  twistTitle: k => ({ gravity: t('Gravity', '重力') })[k] ?? '',
   twistText: k => ({
-    stones: t('Rocks never move or clear, and they block paths.', '石头不会动也消不掉，还会挡路。'),
     gravity: t('After each match, tiles fall to fill the gap.', '每次消除后，方块会掉下来填空。'),
-    ice: t('Frozen tiles can’t move. Match right next to one to break it.', '冻住的方块不能动。在旁边消除就能敲开。'),
-    gifts: t('Wrapped tiles open once a space next to them is free.', '旁边空出来，礼物就会打开。'),
-    mix: t('Two twists every level from now on. Good luck! {sparkle}', '从现在起每关两种玩法。加油！{sparkle}'),
-    ice2: t('Thick ice takes two cracks.', '厚冰要敲两次。'),
   })[k] ?? '',
 
   // stars and prizes
   goalClear: () => t('Clear the board', '清空棋盘'),
-  goalTime: (time, par) => t(`Under ${par}  ·  ${time}`, `${par} 内  ·  ${time}`),
   goalCombo: (best, goal) => t(`{bolt}${goal} combo  ·  best ${best}`, `{bolt}${goal} 连击  ·  最高 ${best}`),
   chest: () => t('{gift} Chest!', '{gift} 宝箱！'),
 
@@ -152,8 +139,8 @@ export const L = {
 
   // an old save meeting the new game for the first time
   welcomeTitle: () => t('Welcome back! {heart}', '欢迎回来！{heart}'),
-  welcomeText: () => t('New: rocks, ice, gifts, gravity, stars, Fever, a daily board — and a photo puzzle of us.',
-    '新内容：石头、冰块、礼物、重力、星星、狂热、每日挑战 —— 还有我们的照片拼图。'),
+  welcomeText: () => t('New: gravity, stars, Fever, a daily board — and a photo puzzle of us.',
+    '新内容：重力、星星、狂热、每日挑战 —— 还有我们的照片拼图。'),
   welcomeGift: n => t(`${n} levels cleared — your first photo is ready.`, `已过 ${n} 关 —— 第一张照片送你。`),
   openGift: () => t('Open my gift {gift}', '打开礼物 {gift}'),
   albumCount: n => t(`${n} photo${n === 1 ? '' : 's'} unlocked`, `已解锁 ${n} 张照片`),
@@ -165,13 +152,14 @@ export const L = {
   dailyPill: () => t('{calendar}Daily', '{calendar}每日'),
   dailyTitle: () => t('Daily Board', '每日挑战'),
   dailyClear: () => t('Daily Cleared!', '每日挑战完成！'),
-  dailyTheme: k => ({
-    sweet: t('Sweet Sunday {candy}', '甜蜜周日 {candy}'), stones: t('Rocky Monday {rock}', '石头周一 {rock}'),
-    gravity: t('Falling Tuesday {arrowDown}', '下落周二 {arrowDown}'), ice: t('Frozen Wednesday {ice}', '冰冻周三 {ice}'),
-    gifts: t('Gift Thursday {gift}', '礼物周四 {gift}'), duo: t('Double Friday {duo}', '双重周五 {duo}'),
-    mix: t('Wild Saturday {twister}', '疯狂周六 {twister}'),
-  })[k] ?? '',
-  dailyToast: k => L.dailyTheme(k),
+  /** The daily board's theme by weekday (0 = Sunday). */
+  dailyTheme: day => [
+    t('Sweet Sunday {candy}', '甜蜜周日 {candy}'), t('Calm Monday {heart}', '平静周一 {heart}'),
+    t('Falling Tuesday {arrowDown}', '下落周二 {arrowDown}'), t('Calm Wednesday {heart}', '平静周三 {heart}'),
+    t('Falling Thursday {arrowDown}', '下落周四 {arrowDown}'), t('Calm Friday {heart}', '平静周五 {heart}'),
+    t('Falling Saturday {arrowDown}', '下落周六 {arrowDown}'),
+  ][day] ?? '',
+  dailyToast: day => L.dailyTheme(day),
   dailyPitch: () => t('Our shared board · stars earn {puzzle}', '我们的共同棋盘 · 星星换 {puzzle}'),
   dailyBest: n => (n >= 3 ? t('Perfect! {hearts}', '完美！{hearts}') : t('Replay for more pieces', '再玩拿更多拼图')),
   dailyStreak: n => t(`{flame} ${n}-day streak`, `{flame} 连续 ${n} 天`),
@@ -191,7 +179,7 @@ export const L = {
   modeIcon: m => ({ levels: 'scooter', daily: 'calendar', challenge: 'trophy', big: 'elephant' })[m] ?? 'gamepad',
   modeName: m => ({ levels: L.levelsMode(), daily: L.dailyMode(), challenge: L.challengeMode(), big: L.bigMode() })[m] ?? '',
   modeHint: m => ({
-    levels: t('New twist every 5 levels', '每 5 关一个新玩法'),
+    levels: t('Gravity from level 5', '第 5 关起有重力'),
     daily: t('A new board every day', '每天一个新棋盘'),
     challenge: t('Chase a high score', '冲击最高分'),
     big: t('A giant 204-tile board', '204 块超大棋盘'),

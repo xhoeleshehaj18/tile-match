@@ -31,6 +31,8 @@ const KEYS = [
   // v23: the shop, and what a board in progress has earned toward it
   'coins', 'coins.earned', 'shop.owned', 'shop.rider', 'shop.trail', 'shop.gift',
   ...['', 'levels.', 'big.', 'daily.'].map(p => p + 'fevers'), 'paidScore',
+  // v24: gravity is the only twist left, and its card shows once
+  'levels.gravitySeen', 'big.gravitySeen',
 ];
 const isBoard = k => k === 'board' || k.endsWith('.board');
 

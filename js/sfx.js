@@ -408,36 +408,6 @@ export const win = sr => tones(sr, [[523, 0.1], [659, 0.1], [784, 0.1], [1047, 0
 
 // ------------------------------------------------------------------------- twist entrances
 
-/** Ice forming over the board: a cold hiss swelling under high glassy tinkles. */
-export function frost(sr) {
-  const rand = rng(21);
-  const out = new Float32Array(Math.floor(sr * 1.1));
-  const hiss = filter(noise(out.length, rand), sr, 'hp', 5500);
-  const he = dbEnvelope(hiss.length, sr, [[0, -40], [0.25, -8], [0.5, -14], [1.1, -50]]);
-  for (let i = 0; i < hiss.length; i++) hiss[i] *= he[i];
-  mixInto(out, hiss, 0, 0.35);
-  const notes = [2637, 3136, 2349, 3520, 2794, 3951, 3136];
-  notes.forEach((f, k) => mixInto(out, bell(sr, f, 0.45, 0.1 - k * 0.008), Math.floor(sr * (0.05 + k * 0.085))));
-  return normalize(out, 0.5);
-}
-
-/** A rock landing: a low body thump under a dull crunch of grit. */
-export function thud(sr) {
-  const rand = rng(8);
-  const out = new Float32Array(Math.floor(sr * 0.3));
-  let ph = 0;
-  for (let i = 0; i < out.length; i++) {
-    const t = i / sr;
-    ph += (2 * Math.PI * (95 - 40 * Math.min(1, t / 0.08))) / sr;
-    out[i] = Math.sin(ph) * Math.exp(-t / 0.07);
-  }
-  const grit = filter(noise(Math.floor(sr * 0.12), rand), sr, 'lp', 1400);
-  for (let i = 0; i < grit.length; i++) grit[i] *= Math.exp(-i / (sr * 0.025));
-  mixInto(out, grit, 0, 0.5);
-  saturate(out, 1.5);
-  return normalize(out, 0.7);
-}
-
 /** The pull of gravity: a soft rush of air that swells and passes. */
 export function whoosh(sr) {
   const rand = rng(13);
@@ -447,8 +417,5 @@ export function whoosh(sr) {
   return normalize(out, 0.45);
 }
 
-/** Presents appearing: bright little pops climbing up. */
-export const giftpop = sr => tones(sr, [[784, 0.07], [988, 0.07], [1175, 0.07], [1568, 0.22]], 'sine', 0.35);
-
 /** Every named effect, for sound.play(name). */
-export const SFX = { tap, fail, slide, shuffle, win, lose, frost, thud, whoosh, giftpop };
+export const SFX = { tap, fail, slide, shuffle, win, lose, whoosh };

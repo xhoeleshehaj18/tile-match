@@ -185,8 +185,7 @@ function coinReward(coins) {
   return [chip, why];
 }
 
-const TWIST_ICONS = { stones: 'rock', gravity: 'arrowDown', ice: 'ice', gifts: 'gift', duo: 'duo', mix: 'duo', ice2: 'ice', sweet: 'candy' };
-const clock = sec => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+const TWIST_ICONS = { gravity: 'arrowDown', sweet: 'candy' };
 
 /**
  * The photo puzzle as a little board: the pieces in `mask` in place on their tray, the rest
@@ -351,8 +350,8 @@ export class UI {
 
   /**
    * Everything that isn't the board, in one panel with four tabs along the bottom: Play (continue,
-   * restart, which mode), Shop, Album and Settings (only real settings). The pause button opens it
-   * on Play and the shop button on Shop; the level clock stands still while it's open.
+   * which mode), Shop, Album and Settings (only real settings). The pause button opens it on Play
+   * and the shop button on Shop.
    */
   openMenu(tab = 'play', select = null) {
     const layer = this.layers.menu;
@@ -415,28 +414,10 @@ export class UI {
     m.body.scrollTop = 0;
   }
 
-  /** Continue, restart, and the four ways to play as cards. */
+  /** Continue, and the four ways to play as cards. */
   playPage(page) {
     const game = this.game;
     page.append(button(L.resume(), () => this.hide('menu')));
-    // A game in progress takes a second tap within a few seconds, so a slip can't cost her the
-    // board (or her streak).
-    const levels = game.relaxed;
-    const label = levels ? L.restartLevel() : L.newGame();
-    let armed = 0;
-    const restart = button(label, () => {
-      if (game.inProgress && !armed) {
-        restart.textContent = levels ? L.confirmRestart() : L.confirmNewGame();
-        restart.classList.add('armed');
-        armed = setTimeout(() => { armed = 0; restart.textContent = label; restart.classList.remove('armed'); }, 3000);
-        return;
-      }
-      clearTimeout(armed);
-      armed = 0;
-      this.hide('menu');
-      game.restartLevel();
-    }, 'cream slim');
-    page.append(restart);
 
     page.append(h('h2', 'section', L.mode()));
     const grid = h('div', 'modes');
@@ -659,7 +640,6 @@ export class UI {
         goals.append(row);
       };
       goal(true, L.goalClear());
-      goal(r.timeOk, L.goalTime(clock(r.time), clock(r.par)));
       goal(r.comboOk, L.goalCombo(r.bestCombo, r.comboGoal));
       panel.append(goals);
 
@@ -822,7 +802,7 @@ export class UI {
     const best = Daily.best(today);
     const streak = Daily.streak;
     // the theme's own icon goes big, and comes out of the line under it
-    const [themeIcon, themeText] = splitIcon(L.dailyTheme(rules.theme));
+    const [themeIcon, themeText] = splitIcon(L.dailyTheme(rules.day));
     panel.append(bigIcon(themeIcon ?? TWIST_ICONS[rules.theme] ?? 'calendar'));
     panel.append(h('p', 'sub', themeText));
     panel.append(starRow(best, false));

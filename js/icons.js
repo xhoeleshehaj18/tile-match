@@ -5,7 +5,7 @@
 //
 // An icon is a list of parts in a 32×32 box, drawn in order. The same parts are painted onto a
 // canvas (the HUD, via Path2D) and built as inline SVG (the HTML panels), so both match exactly.
-// In text, `{name}` stands for an icon: "Ice melted! {ice}".
+// In text, `{name}` stands for an icon: "Thinking of you {hearts}".
 
 const INK = '#1E2208';
 const OUT = 2; // outline width in the 32-unit box
@@ -18,18 +18,15 @@ const K = {
   gold: '#FFD23F', goldSh: '#F5A51F', goldLt: '#FFEA95', goldDk: '#EE9A12',
   orange: '#FF9A45', orangeSh: '#F07A22',
   blue: '#74C3FF', blueSh: '#4FA5EE', paleBlue: '#EAF6FF',
-  ice: '#BDE8FF', iceSh: '#8ECFF5',
   green: '#6CCB6A', greenSh: '#4CB050',
   mint: '#86DDB5', mintSh: '#5FC495',
   lilac: '#C3A4FF', lilacSh: '#A283F2', paleLilac: '#F6F1FF',
   paper: '#FFFDF7', paperSh: '#EDE5D3',
   cream: '#FFF3DA', creamSh: '#EDD9B2',
-  grey: '#CBC4B8', greySh: '#A89F92',
   brown: '#C98B55', brownSh: '#A96E3E',
   metal: '#BCC6D3', metalSh: '#9AA6B6',
   dark: '#4A4453',
   ele: '#B9C8EA', eleSh: '#98A9D2',
-  tileFace: '#F5FFD6', tileSide: '#62B236',
 };
 
 // ---------------------------------------------------------------- geometry, as SVG path strings
@@ -168,18 +165,6 @@ function gear(cx, cy, R, r, teeth = 8) {
   return roundPoly(pts, 0.9);
 }
 
-/** A little game tile (cream face, green side) with a heart on it, turned by `deg`. */
-function tile(cx, cy, deg) {
-  const w = 12.6, h = 15.6, lip = 2.8;
-  const box = (x, y, bw, bh, r) => roundPoly([[x, y], [x + bw, y], [x + bw, y + bh], [x, y + bh]], r);
-  const at = d => turn(d, deg, cx, cy);
-  return [
-    solid(at(box(cx - w / 2, cy - h / 2, w, h, 3)), K.tileSide),
-    flat(at(box(cx - w / 2 + 1, cy - h / 2 + 1, w - 2, h - lip - 1.4, 2.4)), K.tileFace),
-    flat(at(heart(cx, cy - lip / 2 + 0.2, 3.6)), K.pink),
-  ];
-}
-
 export const ICONS = {
   heart: [solid(HEART, K.pink, K.pinkSh), gloss('M21.2 8.7C23.5 8.5 25.3 10 25.6 12.2')],
   hearts: [
@@ -251,27 +236,11 @@ export const ICONS = {
     solid(twinkle(24.4, 24, 5.4, 0.24), K.goldLt, K.gold, 1.6),
     solid(circle(25.4, 7.4, 1.8), K.goldLt, null, 1.4),
   ],
-  ice: [
-    solid(rect(4.4, 6.8, 23.2, 21.8, 5.6), K.ice, K.iceSh),
-    ...eyes(12.2, 19.8, 18.4),
-    stroke('M14.7 21.2Q16 22.5 17.3 21.2', 1.3),
-    ...cheeks(9.2, 22.8, 21.2),
-    gloss('M21.6 9.7C23.4 9.8 24.8 11.2 24.9 13'),
-    gloss('M24.9 15.6V17', 1.7),
-  ],
   candy: [
     solid(roundPoly([[10.6, 16], [3.2, 10], [5.2, 16], [3.2, 22]], [0.6, 1.4, 1, 1.4]), K.pinkLt, K.pinkLtSh),
     solid(roundPoly([[21.4, 16], [28.8, 10], [26.8, 16], [28.8, 22]], [0.6, 1.4, 1, 1.4]), K.pinkLt, K.pinkLtSh),
     solid(circle(16, 16, 7.8), K.pink, K.pinkSh),
     stroke('M11.8 11.2C15.2 12.8 16.4 17.2 14.2 22.4M16.8 9.4C20.2 11.4 21 16.4 18.8 21.4', 1.7, '#FFFFFF', 0.85),
-  ],
-  rock: [
-    solid('M5.2 23.6C4 19.4 6.2 13.8 10 11C12.8 8.8 16.4 8 19.8 8.9C24.6 10.3 27.9 14.6 27.9 19.4C27.9 23 26.2 25.9 22.8 26.4' +
-      'C18 27.1 12.8 27.1 8.6 26.4C7 26.1 5.8 25.1 5.2 23.6Z', K.grey, K.greySh),
-    stroke('M11.2 18.6Q12.6 20 14 18.6M18.6 18.6Q20 20 21.4 18.6', 1.4),
-    ...cheeks(9.4, 23.4, 21.2, 1.8, 1.1),
-    flat(ellipse(21.6, 12.8, 1.5, 0.9), K.greySh),
-    gloss('M22.2 10.6C24.2 11.6 25.8 13.4 26.4 15.6', 1.5),
   ],
   gift: [
     solid(rect(6.2, 14.2, 19.6, 14.2, 2.6), K.pink, K.pinkSh),
@@ -389,14 +358,6 @@ export const ICONS = {
     solid(twinkle(5.6, 5.8, 3.8, 0.26), K.goldLt, null, 1.3),
     solid(twinkle(26.6, 6.2, 3, 0.26), K.goldLt, null, 1.3),
   ],
-  twister: [
-    line('M5.2 7.4C11 5.6 21 5.6 26.8 7.4', K.lilac, 3),
-    line('M8 12.2C12.8 10.8 20.2 10.8 24.6 12.4', K.lilac, 3),
-    line('M10.4 17C13.8 15.8 19 16 21.4 17.4', K.lilac, 2.8),
-    line('M12.8 21.6C15 20.8 17.8 21 18.8 22.2', K.lilac, 2.6),
-    line('M14.6 26.2C15.6 25.6 16.8 25.8 17.2 26.6', K.lilac, 2.4),
-  ],
-  duo: [...tile(11.2, 17, -10), ...tile(20.8, 15.6, 9)],
   yuzu: [
     solid(circle(16, 18, 10.8), '#FFB21E', '#F09500'),
     solid('M16.4 7.6C17 4.2 21.2 2.6 24.6 3.8C23.4 7.2 19.8 8.8 16.4 7.6Z', K.green, K.greenSh),
@@ -551,7 +512,7 @@ export function rich(text, cls = 'ic') {
 /** The text without its icons, e.g. for a label read aloud. */
 export const plain = text => text.replace(TOKEN, '').replace(/\s{2,}/g, ' ').trim();
 
-/** The first icon in a line and the line without it: "Frozen Wednesday {ice}" → ['ice', 'Frozen Wednesday']. */
+/** The first icon in a line and the line without it: "Falling Tuesday {arrowDown}" → ['arrowDown', 'Falling Tuesday']. */
 export function splitIcon(text) {
   const m = [...text.matchAll(TOKEN)].find(x => ICONS[x[1]]);
   return m ? [m[1], plain(text.replace(m[0], ''))] : [null, text];
