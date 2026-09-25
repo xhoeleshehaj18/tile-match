@@ -1,5 +1,5 @@
-// The HUD's pieces: the buttons along the top and bottom, the pills with the level, score and
-// clock, the badges, toasts and the big bouncy words (combo, FEVER!, +30). Everything is built
+// The HUD's pieces: the buttons along the top and bottom, the pills with the level and score,
+// the badges, toasts and the big bouncy words (combo, FEVER!, +30). Everything is built
 // like the board's tiles and in the icons' sticker style: a cream face with an ink outline on a
 // lip, brown lettering and coloured icons. Drawn once into offscreen canvases, like art.js.
 
@@ -82,10 +82,9 @@ export function bigButton(w, h, icon) {
 }
 
 /**
- * A rounded pill of text, with `{name}` icons drawn in line. `look` picks the colours; `color`
- * overrides the lettering (e.g. the clock running low).
+ * A rounded pill of text, with `{name}` icons drawn in line. `look` picks the colours.
  */
-export function pill(text, height, { look = LOOK.cream, color = look.text, fontScale = 0.5, iconScale = 0.74, pad = 0.44, reuse = null } = {}) {
+export function pill(text, height, { look = LOOK.cream, fontScale = 0.5, iconScale = 0.74, pad = 0.44, reuse = null } = {}) {
   const lw = Math.max(1.2, height * 0.06), lip = height * 0.12;
   const fh = height - lw - lip;
   const fs = height * fontScale, font = `900 ${fs}px ${FONT}`;
@@ -104,7 +103,7 @@ export function pill(text, height, { look = LOOK.cream, color = look.text, fontS
   plate(ctx, lw / 2, lw / 2, w - lw, height - lw, fh / 2, lw, lip, look);
   const mid = lw / 2 + fh / 2;
   ctx.font = font;
-  ctx.fillStyle = color;
+  ctx.fillStyle = look.text;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
   let x = lw / 2 + left;

@@ -172,8 +172,8 @@ class Scene {
       const u = uiScale();
       let countSprite = null;
       const showCount = n => {
-        countSprite = pill(`{puzzle}${L.puzzleCount(n)}`, 34 * u, { look: LOOK.blush, fontScale: 0.46, reuse: countSprite });
-        this.count.replaceChildren(sized(countSprite, L.puzzleCount(n)));
+        countSprite = pill(`{puzzle}${L.puzzleProgress(n)}`, 34 * u, { look: LOOK.blush, fontScale: 0.46, reuse: countSprite });
+        this.count.replaceChildren(sized(countSprite, L.puzzleProgress(n)));
       };
       if (completed) {
         this.title.replaceChildren(sized(bigText([{ text: L.photoUnlockedTitle(), size: TITLE * u, ...INKS.pink }]), L.photoUnlockedTitle()));

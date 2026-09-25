@@ -416,7 +416,6 @@ export class Game {
     this.sparkleSprite = Art.sparkle(cell * 0.4);
     this.glowSprite = Art.glow(cell * 1.2);
     this.ringSprite = Art.ring(cell * 1.1);
-    this.streakSprite = Art.streak(cell * 2.4, cell * 0.12);
     this.speedLineSprite = Art.streak(H * 0.22, Math.max(2, cell * 0.08));
     this.bigArrowSprite = Art.arrow(cell * 2.4);
     this.fragSprites = new Map();
@@ -1825,7 +1824,7 @@ export class Game {
     sound.play('shuffle');
     const b = this.boardRect;
     const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
-    for (const p of this.board.movable()) {
+    for (const p of this.board.occupied()) {
       const n = this.node(p);
       if (!n) continue;
       this.anim.cancel(n);

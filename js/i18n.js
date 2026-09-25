@@ -34,10 +34,6 @@ export const L = {
   levelsMode: () => t('Levels', '闯关'),
   challengeMode: () => t('Challenge', '挑战'),
   bigMode: () => t('Big', '超大'),
-  levelsHint: () => t('Can’t lose · gravity from level 5', '不会输 · 第 5 关起有重力'),
-  challengeHint: () => t('Limited shuffles · you can lose', '洗牌有限 · 会输'),
-  bigHint: () => t('A giant 204-tile board', '204 块超大棋盘'),
-  newGame: () => t('New Game', '新游戏'),
   resume: () => t('Continue', '继续'),
 
   keepSafeShort: () => t('Save', '保存'),
@@ -64,7 +60,6 @@ export const L = {
   gotIt: () => t('Got it', '知道啦'),
 
   levelClear: n => t(`Level ${n} Clear!`, `第 ${n} 层 通关！`),
-  madeItHome: () => t('She made it home!', '她到家啦！'),
   nextLevel: () => t('Next Level', '下一关'),
   boardCleared: () => t('Board Cleared!', '全部消除！'),
   outOfMoves: () => t('Out of Moves', '无路可走'),
@@ -129,13 +124,10 @@ export const L = {
   // photo puzzle
   photoUnlocked: () => t('Photo unlocked! {hearts}', '照片解锁啦！{hearts}'),
   puzzleProgress: n => t(`${n} / 12 pieces`, `${n} / 12 块`),
-  puzzleCount: n => t(`${n} / 12 pieces`, `${n} / 12 块`),
   photoUnlockedTitle: () => t('Photo unlocked!', '照片解锁啦！'),
   addedToAlbum: () => t('Added to our album {hearts}', '已放进我们的相册 {hearts}'),
   tapToContinue: () => t('Tap to continue', '点一下继续'),
   piecesToNext: n => t(`+${n} toward the next photo`, `+${n} 给下一张`),
-  albumShort: () => t('Album', '相册'),
-  albumTitle: () => t('Our Album {hearts}', '我们的相册 {hearts}'),
 
   // an old save meeting the new game for the first time
   welcomeTitle: () => t('Welcome back! {heart}', '欢迎回来！{heart}'),
@@ -148,7 +140,6 @@ export const L = {
 
   // daily board
   dailyMode: () => t('Daily', '每日'),
-  dailyHint: () => t('New board every day · stars earn pieces', '每天新棋盘 · 星星换拼图'),
   dailyPill: () => t('{calendar}Daily', '{calendar}每日'),
   dailyTitle: () => t('Daily Board', '每日挑战'),
   dailyClear: () => t('Daily Cleared!', '每日挑战完成！'),
@@ -184,7 +175,6 @@ export const L = {
     challenge: t('Chase a high score', '冲击最高分'),
     big: t('A giant 204-tile board', '204 块超大棋盘'),
   })[m] ?? '',
-  youAreOn: m => t(`Playing ${L.modeName(m)}`, `正在玩：${L.modeName(m)}`),
 
   // the shop
   riders: () => t('Riders', '骑手'),

@@ -279,7 +279,6 @@ async function forceUpdate() {
 
 export class UI {
   constructor(root) {
-    this.root = root;
     this.game = null;
     this.result = null;
     this.revivePending = null;
@@ -1151,8 +1150,6 @@ export class UI {
   }
 
   // ---------------------------------------------------------------- album
-
-  openAlbum() { this.openMenu('album'); }
 
   /** Every photo she has unlocked, and the one she's collecting now. */
   albumPage(page) {

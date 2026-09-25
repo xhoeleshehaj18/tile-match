@@ -703,8 +703,6 @@ const TRAIL_MOTION = {
   rainbow: { every: 0.028, life: 0.75, size: 13, rise: 0, spread: 0, ribbon: true },
 };
 
-export const TRAIL_IDS = Object.keys(TRAIL_ART);
-
 /** Sprites for a trail at scale `s` (null for no trail). */
 export function trailSprites(id, s) {
   const art = TRAIL_ART[id];

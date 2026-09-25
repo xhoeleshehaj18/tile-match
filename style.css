@@ -565,7 +565,6 @@ html.standalone .overlay { bottom: auto; height: 100lvh; }
   background: #fff;
   box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.25);
 }
-.row.dim { opacity: 0.4; }
 
 .segmented {
   display: flex;
@@ -797,7 +796,6 @@ html.standalone .overlay { bottom: auto; height: 100lvh; }
   .big-icon, .big-icon .ic, .tick { animation: none; }
 }
 
-.album-panel { gap: 0.625rem; }
 .album-count { margin: 0.25rem 0 -0.25rem; font-size: 1rem; font-weight: 800; color: var(--title); letter-spacing: -0.005em; }
 .album-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.375rem; }
 .thumb {

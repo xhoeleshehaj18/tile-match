@@ -123,14 +123,6 @@ export class Board {
     return Math.abs(a.c - b.c) + Math.abs(a.r - b.r) === 1 && !!ta && !!tb && ta.kind === tb.kind;
   }
 
-  touchingPartner(p) {
-    for (const d of DIRS) {
-      const q = moved(p, d);
-      if (this.touching(p, q)) return q;
-    }
-    return null;
-  }
-
   // --- Sliding
 
   /** Tiles pushed when dragging `p` toward `d`, and how many empty cells lie beyond them. */

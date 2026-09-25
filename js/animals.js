@@ -536,12 +536,6 @@ export function groupMatrix(node, p) {
   return m;
 }
 
-/** A group's pose as an SVG transform string: its base, then the move around its pivot. */
-export function groupTransform(node, p) {
-  const [a, b, c, d, e, f] = groupMatrix(node, p);
-  return `matrix(${[a, b, c, d, e, f].map(v => Math.round(v * 10000) / 10000).join(' ')})`;
-}
-
 /** Points along a path, for renderers that need polygons (the watercolour brush). Cached per path. */
 const sampleCache = new Map();
 let probe;
