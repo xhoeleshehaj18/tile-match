@@ -13,6 +13,7 @@ import { photos } from './photos.js';
 import * as report from './report.js';
 import { riderFrames, Trail } from './riders.js';
 import { paintedFrames, pickFrame } from './painted.js';
+import { hatFrames } from './hats.js';
 import * as Hud from './hud.js';
 import { shop, levelCoins, challengeCoins } from './shop.js';
 
@@ -197,6 +198,7 @@ export class Game {
     this.infoKey = '';
     this.infoSprite = null;
     this.dailyDot = false;
+    this.shopDot = false;
     this.lastSparkle = { x: 0, y: 0 };
     this.tileAlpha = 1;
     this.toastSprite = null;
@@ -520,11 +522,13 @@ export class Game {
    * frames show at once; an animal's watercolour frames replace them as soon as they've loaded.
    */
   makeRider() {
-    const id = shop.rider, trail = shop.trail, h = this.riderH;
-    if (this.riderKey !== `${id}:${h}`) {
-      this.riderKey = `${id}:${h}`;
+    const id = shop.rider, trail = shop.trail, hat = shop.hat, h = this.riderH;
+    if (this.riderKey !== `${id}:${hat}:${h}`) {
+      // only the hat changed: the old frames stay up until the new ones are drawn, rather than flashing
+      const sameRider = this.riderId === id && this.riderH0 === h;
+      this.riderKey = `${id}:${hat}:${h}`;
       this.riderId = id;
-      this.riderSprites = riderFrames(id, h);
+      this.riderH0 = h;
       const key = this.riderKey;
       const use = frames => {
         if (this.riderKey !== key) return;
@@ -534,8 +538,12 @@ export class Game {
           .then(list => { if (this.riderKey === key && this.riderSprites === frames) this.riderSprites = list; })
           .catch(() => {});
       };
-      use(this.riderSprites);
-      paintedFrames(id, h).then(frames => frames && use(frames)).catch(() => {});
+      if (!sameRider) use(riderFrames(id, h));
+      // a hatted animal is drawn from its SVG; the bare painted sheet only when that fails, so a
+      // late sheet can never cover the hat
+      const bare = () => paintedFrames(id, h).then(frames => frames && use(frames)).catch(() => {});
+      if (hat === 'nohat') bare();
+      else hatFrames(id, hat, h).then(use).catch(bare);
     }
     if (!this.trail || this.trail.id !== trail || this.trail.s !== this.s) {
       this.trail = trail === 'none' ? null : new Trail(trail, this.s);
@@ -545,9 +553,10 @@ export class Game {
   /** Coins or the equipped items changed (a purchase, a reward): catch the scene up. */
   refreshShop() {
     if (!this.built) return;
-    const before = this.riderId;
+    const before = this.riderKey;
+    this.shopDot = shop.pendingGifts().length > 0;
     this.makeRider();
-    if (this.riderId !== before) this.hop(1.4);
+    if (this.riderKey !== before) this.hop(1.4);
     // coins going down (spent) show at once; coins coming in fly in once the panels are closed
     if (shop.coins < this.shownCoins) { this.shownCoins = shop.coins; this.updateCoins(); }
   }
@@ -560,7 +569,8 @@ export class Game {
   }
 
   updateCoins(animated = false) {
-    const text = Math.round(this.shownCoins).toLocaleString();
+    const n = Math.round(this.shownCoins);
+    const text = n < 10000 ? String(n) : n.toLocaleString(); // as the shop writes coins
     if (text !== this.coinText) {
       this.coinText = text;
       this.coinSprite = Hud.pill(`{coin}${text}`, 34 * this.s, { reuse: this.coinSprite, iconScale: 0.86 });
@@ -663,6 +673,7 @@ export class Game {
     this.scoreSprite = Hud.pill(levels ? (this.mode === 'daily' ? L.dailyPill() : L.level(this.level)) : `{star}${this.score.toLocaleString()}`,
       42 * s, { reuse: this.scoreSprite });
     this.dailyDot = Daily.best(todayKey()) === 0;
+    this.shopDot = shop.pendingGifts().length > 0;
     this.updateInfo();
     if (levels) {
       this.bestSprite = null;
@@ -1954,7 +1965,7 @@ export class Game {
       mode: this.mode, level: this.level, score: this.score, best: Stats.best,
       tiles: b.tileCount, total: this.levelTileTotal, hasMove: b.hasMove,
       hints: this.hints, shuffles: this.shuffles, secondChanceUsed: this.secondChanceUsed,
-      coins: shop.coins, earned: shop.earned, rider: shop.rider, trail: shop.trail,
+      coins: shop.coins, earned: shop.earned, rider: shop.rider, hat: shop.hat, trail: shop.trail,
       busy: this.busy, finishing: this.finishing, pointer: this.pointerId,
       drag: this.drag ? (this.drag.horizontal ? 'horizontal' : 'vertical') : 'none',
       selected: this.selected ? `${this.selected.c},${this.selected.r}` : 'none',
@@ -2318,6 +2329,12 @@ export class Game {
     }
     const cs = this.coinSprite;
     this.drawAt(cs, this.coinLeft + cs.w / 2, this.shopBtn.y - 2 * s, 0, coinPop, 1);
+    if (this.shopDot) {
+      // a gift hat waiting to be opened
+      const half = this.shopBtn.sprite.w / 2;
+      const pulse = 1 + 0.12 * Math.max(0, Math.sin(t * 4));
+      this.drawAt(this.dotSprite, this.shopBtn.x + half - 3 * s, this.shopBtn.y - half + 3 * s, 0, pulse, 1);
+    }
     this.flyCoinsIn(t);
     this.drawCoinsIn(t);
     const dailyPress = this.dailyBtn.pressT0 >= 0 ? segments(PRESS, t - this.dailyBtn.pressT0, 1) : null;

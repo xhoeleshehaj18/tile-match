@@ -510,6 +510,31 @@ export function scene(id) {
 /** The pose at time `t`: { groupName: { x, y, r, sx, sy, a }, d: { dynKey: path } }. */
 export const poseAt = (id, t, seed = 0) => POSES[id](t, seed);
 
+/** The four poses the game switches between (see frameAt in riders.js): blink, and the idle move. */
+export function keyPose(id, blink, alt) {
+  const p = { wheel: { r: 0 }, eyeOpen: { a: blink ? 0 : 1 }, eyeShut: { a: blink ? 1 : 0 } };
+  if (id === 'bunny' && alt) Object.assign(p, { earFront: { r: 1.62 }, earBack: { r: -0.08 } });
+  if (id === 'capy' && alt) Object.assign(p, { yuzu: { y: -7, r: 0.28, sx: 0.92, sy: 1.08 }, leaf: { r: -0.4 } });
+  if (id === 'kitty') {
+    const tail = kittyTail(alt ? 1 : 0.1);
+    p.d = { tail: tail.d, tailTip: tail.tip };
+    if (alt) p.earFront = { r: 0.3 };
+  }
+  if (id === 'penguin') {
+    p.d = { scarf: scarfTail(alt ? 1 : 0) };
+    p.arm = { r: alt ? 0.03 : -0.1 };
+    p.tuft = { r: alt ? 0.12 : -0.12 };
+  }
+  if (id === 'panda' && alt) Object.assign(p, { earBack: { y: -3, r: -0.25 }, earFront: { y: -3, r: 0.25 }, sprout: { r: 0.22 } });
+  if (id === 'unicorn') {
+    p.tail = { r: alt ? 0.14 : -0.14 };
+    p.mane = { x: alt ? -0.2 : -1.4 };
+    p.lashes = { a: blink ? 0 : 1 };
+    p.twinkle = { a: 0 }; // the unicorn's twinkle comes and goes, too quick for four poses
+  }
+  return p;
+}
+
 // ---------------------------------------------------------------- shared renderer helpers
 
 /** 2D affine matrices as [a, b, c, d, e, f] (like DOMMatrix). */

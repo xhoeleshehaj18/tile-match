@@ -1,4 +1,4 @@
-// The shop: coins earned by playing, and the riders and trails they buy.
+// The shop: coins earned by playing, and the riders, hats and trails they buy.
 //
 // ---------------------------------------------------------------- the economy
 //
@@ -28,8 +28,17 @@
 //
 // Someone who was already playing gets a starter gift when the shop opens: 150 plus 10 for every
 // level already cleared, up to 600 — enough, from level 46 on, to take the Capybara home at once.
+//
+// Hats are for the animals (the girl keeps her cap). One bought hat can be worn by any of them, and
+// each animal remembers its own. Some hats are never sold, only given: a welcome gift, and gifts that
+// arrive on a day (from that day on they wait to be opened; they never expire). Hat prices:
+//   beret 250, then the commons 300–380   ≈ 4–6 levels
+//   strawberry 520 (我爱你), top hat 1314 (一生一世), tiger 888 (8 = 发): numbers chosen for her
+//   legendary crown 2,000                 ≈ 31 levels, about a week
+// Otherwise new prices keep away from the digit 4.
 
 import { store } from './store.js';
+import { today } from './dates.js';
 
 export const RIDER_ITEMS = [
   { id: 'girl', price: 0 },
@@ -51,7 +60,32 @@ export const TRAIL_ITEMS = [
   { id: 'rainbow', price: 1500, legendary: true },
 ];
 
-const ITEMS = { rider: RIDER_ITEMS, trail: TRAIL_ITEMS };
+/** In the order the shop shows them: no hat, those for sale by price, then the gifts. */
+export const HAT_ITEMS = [
+  { id: 'nohat', price: 0 }, // not 'none': names in i18n.js are keyed by id alone, and trails have 'none'
+  { id: 'beret', price: 250 },
+  { id: 'flowers', price: 300 },
+  { id: 'party', price: 330 },
+  { id: 'straw', price: 360 },
+  { id: 'chef', price: 380 },
+  { id: 'strawberry', price: 520 },
+  { id: 'duck', price: 600 },
+  { id: 'propeller', price: 680 },
+  { id: 'tiger', price: 888 },
+  { id: 'tophat', price: 1314 },
+  { id: 'crown', price: 2000, legendary: true },
+  // gifts have no price (so never "free": price 0 would mean everyone owns them)
+  { id: 'beanie', price: null, gift: 'welcome' },
+  { id: 'witch', price: null, gift: 'halloween' },
+];
+
+/** When each gift can be opened (YYYY-MM-DD), or null for at once. */
+export const GIFTS = { welcome: null, halloween: '2026-10-31' };
+
+/** The animal a hat goes on when the rider is the girl and she has never ridden one: a try-on. */
+export const TRY_ON = 'bunny';
+
+const ITEMS = { rider: RIDER_ITEMS, hat: HAT_ITEMS, trail: TRAIL_ITEMS };
 /** Roughly what one level pays, for "≈ N levels to go". */
 export const COINS_PER_LEVEL = 65;
 
@@ -71,6 +105,31 @@ export const shop = {
     const id = localStorage.getItem('shop.trail');
     return id && this.owns('trail', id) ? id : 'none';
   },
+  /** The hat on the rider in use ('nohat' for the girl, who keeps her cap). */
+  get hat() { return this.hatOn(this.rider); },
+
+  /** Which hat each animal wears, as she left it: { bunny: 'beanie', … }. */
+  hats() { return store.json('shop.hats') ?? {}; },
+  hatOn(animal) {
+    const id = this.hats()[animal];
+    return animal !== 'girl' && id && this.owns('hat', id) ? id : 'nohat';
+  },
+  /**
+   * The animal the hats are shown on and go to: the rider in use, or when that's the girl, the
+   * last animal she rode (or any she owns, for saves from before hats), or else a try-on bunny.
+   * `owned` says whether it is really hers.
+   */
+  get model() {
+    const last = localStorage.getItem('shop.lastAnimal');
+    const any = RIDER_ITEMS.find(i => i.id !== 'girl' && this.owns('rider', i.id))?.id;
+    const id = this.rider !== 'girl' ? this.rider : last && this.owns('rider', last) ? last : any ?? TRY_ON;
+    return { id, owned: this.owns('rider', id) && id !== 'girl' };
+  },
+  /** What is equipped of `kind` (for hats, on the model animal). */
+  current(kind) {
+    if (kind === 'hat') return this.hatOn(this.model.id);
+    return this[kind];
+  },
 
   owned() { return store.json('shop.owned') ?? []; },
   owns(kind, id) {
@@ -86,20 +145,46 @@ export const shop = {
     emit();
   },
 
-  /** Spends the coins and equips the item. Returns false when she can't afford it. */
+  /** Spends the coins and equips the item. Returns false when she can't afford it (or it's a gift). */
   buy(kind, id) {
     const item = this.item(kind, id);
-    if (!item || this.owns(kind, id) || this.coins < item.price) return false;
+    if (!item || item.gift || item.price == null || this.owns(kind, id) || this.coins < item.price) return false;
     store.set('coins', this.coins - item.price);
     store.set('shop.owned', [...this.owned(), `${kind}:${id}`]);
     this.equip(kind, id);
     return true;
   },
 
+  /** Puts it on. A hat goes on the model animal, unless that's only the try-on (then it waits). */
   equip(kind, id) {
     if (!this.owns(kind, id)) return;
-    store.set(kind === 'rider' ? 'shop.rider' : 'shop.trail', id);
+    if (kind === 'hat') {
+      const { id: animal, owned } = this.model;
+      if (owned) store.set('shop.hats', { ...this.hats(), [animal]: id });
+    } else {
+      store.set(`shop.${kind}`, id);
+      if (kind === 'rider' && id !== 'girl') store.set('shop.lastAnimal', id);
+    }
     emit();
+  },
+
+  // ------------------------------------------------ gifts
+
+  claimed() { return store.json('shop.claimed') ?? []; },
+  /** The gift has arrived (its day has come). */
+  giftOpen(item) { return !!item?.gift && (GIFTS[item.gift] == null || today() >= GIFTS[item.gift]); },
+  /** Gift hats that have arrived and not been opened yet, oldest first. */
+  pendingGifts() {
+    const done = this.claimed();
+    return HAT_ITEMS.filter(i => this.giftOpen(i) && !done.includes(i.gift));
+  },
+  /** Opens a gift: it's hers, and it goes straight on the model animal. */
+  claim(item) {
+    if (!this.giftOpen(item) || this.claimed().includes(item.gift)) return false;
+    store.set('shop.claimed', [...this.claimed(), item.gift]);
+    if (!this.owns('hat', item.id)) store.set('shop.owned', [...this.owned(), `hat:${item.id}`]);
+    this.equip('hat', item.id);
+    return true;
   },
 
   /** Calls `fn` whenever coins or the equipped items change. */

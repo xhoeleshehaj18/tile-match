@@ -12,12 +12,15 @@ import { pieceScene, framedBoard, FRAME, LIP } from './puzzlefx.js';
 import { store } from './store.js';
 import { Daily } from './store.js';
 import { todayKey, dailyRules } from './levels.js';
-import { shop, RIDER_ITEMS, TRAIL_ITEMS, COINS_PER_LEVEL } from './shop.js';
+import { shop, RIDER_ITEMS, HAT_ITEMS, TRAIL_ITEMS, GIFTS, TRY_ON, COINS_PER_LEVEL } from './shop.js';
+import { hatThumb, wearHat } from './hats.js';
 import { riderFrame, riderFrames, frameAt, Trail, trailSprites } from './riders.js';
 import { ShopRider, isAnimal } from './shoprider.js';
 import { renderSVG } from './svgrider.js';
 import { poseAt } from './animals.js';
 import { iconEl, rich, splitIcon, uiScale } from './icons.js';
+
+const SHOP_ITEMS = { rider: RIDER_ITEMS, hat: HAT_ITEMS, trail: TRAIL_ITEMS };
 
 /** Sets an element's text; `{name}` in it becomes that drawn icon (see icons.js). */
 const setText = (el, text) => {
@@ -154,12 +157,15 @@ function prizeChip(cls, amount, icon) {
 }
 
 /** A coin and an amount. `chip.set(n)` changes the amount. */
+/** Coins as she'd write them: 1314, not 1,314 (the number is the point); grouped from 10,000. */
+const coins = n => (n < 10000 ? String(n) : n.toLocaleString());
+
 function coinChip(n, cls = '') {
   const chip = h('span', `coin-chip ${cls}`.trim());
-  const num = h('b', '', n.toLocaleString());
+  const num = h('b', '', coins(n));
   chip.append(iconEl('coin', 'ic coin'), num);
   chip.value = n;
-  chip.set = v => { chip.value = v; num.textContent = Math.round(v).toLocaleString(); };
+  chip.set = v => { chip.value = v; num.textContent = coins(Math.round(v)); };
   return chip;
 }
 
@@ -826,15 +832,16 @@ export class UI {
 
   /**
    * The shop: a little stage at the top where the chosen rider scoots along with its trail, what it
-   * is and what it costs, and every rider (or trail) as a card to tap and try on. Nothing changes
-   * until she buys or picks one; buying equips it straight away.
+   * is and what it costs, and every rider (or hat, or trail) as a card to tap and try on. Nothing
+   * changes until she buys or picks one; buying equips it straight away. Hats go on the animals: with
+   * the girl riding, the stage shows the animal they'd go on (see shop.model).
    */
   shopPage(page, select) {
     let kind = select?.kind ?? this.shopKind ?? 'rider';
-    let sel = select?.id ?? (kind === 'rider' ? shop.rider : shop.trail);
-    const seg = segmented([['rider', L.riders()], ['trail', L.trails()]], kind, k => {
+    let sel = select?.id ?? shop.current(kind);
+    const seg = segmented([['rider', L.riders()], ['hat', L.hats()], ['trail', L.trails()]], kind, k => {
       kind = this.shopKind = k;
-      sel = k === 'rider' ? shop.rider : shop.trail;
+      sel = shop.current(k);
       paint();
     });
     seg.classList.add('wide');
@@ -845,18 +852,26 @@ export class UI {
     stage.append(canvas, ribbon, pop);
     const name = h('h2', 'item-name');
     const text = h('p', 'item-text');
+    const note = h('p', 'item-note');
     const action = h('div', 'item-action');
     const grid = h('div', 'shop-grid');
-    page.append(seg, stage, name, text, action, grid);
+    page.append(seg, stage, name, text, note, action, grid);
     const preview = this.startPreview(canvas, stage);
 
     const paint = () => {
-      const items = kind === 'rider' ? RIDER_ITEMS : TRAIL_ITEMS;
+      const items = SHOP_ITEMS[kind];
       const item = items.find(i => i.id === sel) ?? items[0];
-      preview.show(kind === 'rider' ? item.id : shop.rider, kind === 'trail' ? item.id : shop.trail);
+      if (kind === 'rider') preview.show(item.id, shop.trail, shop.hatOn(item.id));
+      else if (kind === 'hat') preview.show(shop.model.id, shop.trail, item.id);
+      else preview.show(shop.rider, item.id, shop.hat);
       stage.classList.toggle('legendary', !!item.legendary);
       name.textContent = L.itemName(kind, item.id);
       setText(text, L.itemText(kind, item.id));
+      // a hat bought while the girl rides goes on an animal, or waits for one
+      const model = shop.model;
+      const away = kind === 'hat' && shop.rider === 'girl' && item.id !== 'nohat' && shop.owns('hat', item.id);
+      note.hidden = !away;
+      if (away) note.textContent = model.owned ? L.hatOnModel(model.id) : L.hatWaits();
       action.replaceChildren(this.itemButton(kind, item, bought => {
         if (bought) {
           sound.play('tap');
@@ -867,33 +882,55 @@ export class UI {
           void pop.offsetWidth;
           pop.classList.add('go');
           countTo(this.menu.coins, shop.coins, 0.7);
-          report.note('bought', `${kind}:${item.id} left ${shop.coins}`);
+          report.note(item.gift ? 'gift' : 'bought', `${kind}:${item.id} left ${shop.coins}`);
         } else {
           sound.play('tap');
           preview.hop();
         }
         paint();
       }));
-      grid.replaceChildren(...items.map(it => this.itemCard(kind, it, it.id === item.id, () => {
+      const pick = it => () => {
         if (sel === it.id) return;
         sel = it.id;
         sound.play('tap', { gain: 0.6 });
         paint();
         preview.hop(0.7);
-      })));
+      };
+      // for sale in price order, then the gifts in their own row; nothing moves after a purchase
+      const cards = [];
+      for (const it of items) {
+        if (it.gift && !cards.gifts) { cards.gifts = true; cards.push(h('h3', 'grid-head', L.gifts())); }
+        cards.push(this.itemCard(kind, it, it.id === item.id, pick(it)));
+      }
+      grid.replaceChildren(...cards);
     };
     paint();
   }
 
-  /** The big button under the stage: in use, use it, buy it, or how far away it still is. */
+  /** The big button under the stage: in use, use it, buy it, open it, or how far away it still is. */
   itemButton(kind, item, done) {
-    const current = kind === 'rider' ? shop.rider : shop.trail;
+    const current = shop.current(kind);
     if (item.id === current) {
-      const b = h('button', 'chunky cream in-use', L.inUse());
+      const b = h('button', 'chunky cream in-use', kind === 'hat' ? L.wearing() : L.inUse());
       b.disabled = true;
       return b;
     }
-    if (shop.owns(kind, item.id)) return button(L.useThis(), () => { shop.equip(kind, item.id); done(false); }, 'cream');
+    if (shop.owns(kind, item.id)) {
+      // a hat with only the try-on bunny to go on: it's hers, waiting for an animal
+      if (kind === 'hat' && !shop.model.owned) {
+        const b = h('button', 'chunky cream in-use', L.yours());
+        b.disabled = true;
+        return b;
+      }
+      return button(kind === 'hat' ? L.wearIt() : L.useThis(), () => { shop.equip(kind, item.id); done(false); }, 'cream');
+    }
+    // gifts have no price: checked first, as `coins >= null` would be true
+    if (item.price == null) {
+      if (shop.giftOpen(item)) return button(L.openHatGift(), () => { if (shop.claim(item)) done(true); });
+      const b = h('button', 'chunky locked', L.giftOn(L.giftDay(GIFTS[item.gift])));
+      b.disabled = true;
+      return b;
+    }
     if (shop.coins >= item.price) {
       const b = button('', () => { if (shop.buy(kind, item.id)) done(true); }, 'pink buy');
       b.append(h('span', '', L.buy()), coinChip(item.price, 'on-button'));
@@ -906,31 +943,70 @@ export class UI {
     return b;
   }
 
-  /** One rider or trail in the grid: its picture, and its price or whether it's in use. */
+  /** One rider, hat or trail in the grid: its picture, and its price, gift day or whether it's in use. */
   itemCard(kind, item, selected, onPick) {
-    const current = kind === 'rider' ? shop.rider : shop.trail;
+    const current = shop.current(kind);
     const owned = shop.owns(kind, item.id);
+    const gift = item.price == null, open = gift && shop.giftOpen(item);
     const cls = ['item-card'];
     if (selected) cls.push('sel');
     if (item.id === current) cls.push('equipped');
-    if (!owned) cls.push(shop.coins >= item.price ? 'affordable' : 'locked');
+    if (!owned) cls.push(gift ? (open ? 'gift ready' : 'gift') : shop.coins >= item.price ? 'affordable' : 'locked');
     if (item.legendary) cls.push('legendary');
+    if (item.legendary && kind === 'hat') cls.push('wide');
     const card = h('button', cls.join(' '));
     card.append(this.thumb(kind, item.id));
-    if (item.id === current) card.append(iconEl('check', 'ic tick'));
-    else if (!owned) card.append(coinChip(item.price, 'card-price'));
+    if (item.legendary && kind === 'hat') card.append(h('span', 'card-name', L.itemName(kind, item.id)));
+    let state;
+    if (item.id === current) {
+      card.append(iconEl('check', 'ic tick'));
+      state = kind === 'hat' ? L.stateWearing() : L.stateInUse();
+    } else if (owned) {
+      state = L.stateOwned();
+    } else if (gift) {
+      const day = L.giftDay(GIFTS[item.gift]);
+      card.append(h('span', 'card-price gift-chip', open ? L.openHatGift() : `{gift} ${day}`));
+      state = open ? L.stateGift() : L.giftOn(day);
+    } else {
+      const chip = coinChip(item.price, 'card-price');
+      // affordable shows in more than colour: the chip says "buy"
+      if (shop.coins >= item.price) chip.append(h('span', 'buy-cue', L.buyShort()));
+      card.append(chip);
+      state = L.statePrice(coins(item.price));
+    }
+    card.setAttribute('aria-label', L.cardState(L.itemName(kind, item.id), state));
     card.addEventListener('click', onPick);
     return card;
   }
 
-  /** A card's picture, drawn once and kept: the rider on its scooter, or a few bits of the trail. */
+  /** A card's picture, drawn once and kept: the rider on its scooter, the hat, or a few bits of the trail. */
   thumb(kind, id) {
     this.thumbs ??= new Map();
     const u = uiScale();
     const key = `${kind}:${id}:${u}`;
     let c = this.thumbs.get(key);
     if (c) return c;
-    if (kind === 'rider' && isAnimal(id)) {
+    if (kind === 'hat') {
+      // the hat on its own, drawn into an image once it's ready (no hat: a dotted head)
+      const size = 64 * u;
+      c = h('span', 'hat-thumb');
+      c.w = c.h = size;
+      if (id === 'nohat') {
+        const [cv, ctx] = surfaceFor(size, size);
+        ctx.scale(u, u);
+        ctx.strokeStyle = 'rgba(30,34,8,0.28)';
+        ctx.lineWidth = 3.5;
+        ctx.lineCap = 'round';
+        ctx.setLineDash([6, 7]);
+        ctx.beginPath();
+        ctx.arc(32, 48, 18, Math.PI, 0);
+        ctx.stroke();
+        cv.style.width = cv.style.height = `${size}px`;
+        c.append(cv);
+      } else {
+        hatThumb(id, size).then(cv => { cv.style.width = cv.style.height = `${size}px`; c.append(cv); }).catch(() => {});
+      }
+    } else if (kind === 'rider' && isAnimal(id)) {
       // the animals as the same SVG as the stage above, standing still (a moment with open eyes
       // and every idle move at rest)
       const r = renderSVG(id, { style: 'rich', size: (64 * u * 100) / 140, shadow: false });
@@ -979,7 +1055,7 @@ export class UI {
   /**
    * The shop's stage: sky, a road that scrolls, and the rider bobbing along with its trail. The
    * animals are live SVG that do tricks (shoprider.js); the girl is drawn in the canvas. Runs only
-   * while the shop tab is showing. Returns { show(rider, trail), hop(), celebrate() }.
+   * while the shop tab is showing. Returns { show(rider, trail, hat), hop(), celebrate() }.
    */
   startPreview(canvas, stage) {
     const dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -1065,7 +1141,7 @@ export class UI {
       }
     };
     const api = {
-      show(rider, trailName) {
+      show(rider, trailName, hat = 'nohat') {
         if (rider !== riderId) {
           riderId = rider;
           actor?.remove();
@@ -1077,6 +1153,7 @@ export class UI {
             frames = riderFrames(rider, RIDER);
           }
         }
+        actor?.setHat(hat);
         if (trailName !== trailId) { trailId = trailName; trail = trailName === 'none' ? null : new Trail(trailName, s); }
       },
       hop(k = 1) {
@@ -1108,21 +1185,34 @@ export class UI {
   // ---------------------------------------------------------------- the shop opening
 
   /**
-   * Once, when the shop first exists: what it is, three of the riders waving hello, and a starter
-   * gift of coins. Waits for the welcome, the opening deal and any panel to be out of the way.
+   * Gifts, shown when the app opens: once, when the shop first exists, what it is and a starter gift
+   * of coins; then each gift hat that has arrived (the welcome beanie, the witch hat on Halloween),
+   * one at a time. Waits for the welcome, the opening deal and any panel to be out of the way.
    */
   maybeShowShopGift() {
-    if (!shop.giftPending) return;
+    const hat = shop.pendingGifts()[0];
+    if (!shop.giftPending && !hat) return;
     if (this.anyOpen || this.breakKind || this.welcomeWaiting || this.game.drag || this.game.finishing) {
       setTimeout(() => this.maybeShowShopGift(), 2500);
       return;
     }
+    if (shop.giftPending) this.showStarterGift();
+    else this.showHatGift(hat);
+  }
+
+  /** Closes a gift panel, and lets the next gift (if any) come along after it. */
+  closeGift() {
+    this.hide('gift');
+    setTimeout(() => this.maybeShowShopGift(), 900);
+  }
+
+  showStarterGift() {
     const gift = shop.giveStarterGift();
     const layer = this.layers.gift;
     layer.replaceChildren();
     const [scrim, panel] = this.panel(L.shopOpenTitle());
     panel.classList.add('gift-panel');
-    const close = () => this.hide('gift');
+    const close = () => this.closeGift();
     scrim.addEventListener('click', close);
     const trio = h('div', 'gift-riders');
     for (const id of ['bunny', 'capy', 'kitty']) {
@@ -1140,13 +1230,51 @@ export class UI {
     line.append(h('span', '', L.shopGift()), chip);
     panel.append(line);
     panel.append(button(L.takeALook(), () => {
-      close();
+      this.closeGift();
       this.openMenu('shop', { kind: 'rider', id: 'capy' });
     }));
     panel.append(quietButton(L.later(), close));
     layer.append(scrim, panel);
     this.show('gift');
     report.note('shopGift', String(gift));
+  }
+
+  /**
+   * A gift hat: it's hers as soon as the panel opens (and on her animal), shown on every animal she
+   * owns at once; with none yet, on the try-on bunny, waiting for her.
+   */
+  showHatGift(item) {
+    shop.claim(item);
+    const layer = this.layers.gift;
+    layer.replaceChildren();
+    const [scrim, panel] = this.panel(L.giftTitle(item.id));
+    panel.classList.add('gift-panel');
+    const close = () => this.closeGift();
+    scrim.addEventListener('click', close);
+    const mine = RIDER_ITEMS.filter(i => i.id !== 'girl' && shop.owns('rider', i.id)).map(i => i.id);
+    const who = mine.length ? mine : [TRY_ON];
+    const size = (who.length > 3 ? 62 : 80) * uiScale();
+    const row = h('div', 'gift-riders hat-gift');
+    who.forEach((id, i) => {
+      const r = renderSVG(id, { style: 'rich', size: (size * 100) / 140, shadow: false });
+      r.pose(poseAt(id, 1.8 + i * 0.37));
+      wearHat(r, id, item.id);
+      const wrap = h('div', 'gift-rider');
+      wrap.style.animationDelay = `${-0.45 * i}s`;
+      wrap.append(r.svg);
+      row.append(wrap);
+    });
+    panel.append(row, h('p', 'why', L.giftText(item.id)));
+    if (!mine.length) panel.append(h('p', 'item-note', L.giftWaits()));
+    panel.append(button(L.putItOn(), () => {
+      this.closeGift();
+      this.openMenu('shop', { kind: 'hat', id: item.id });
+    }));
+    panel.append(quietButton(L.later(), close));
+    layer.append(scrim, panel);
+    this.show('gift');
+    sound.play('tap');
+    report.note('hatGift', item.id);
   }
 
   // ---------------------------------------------------------------- album

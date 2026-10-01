@@ -5,6 +5,7 @@
 
 import { poseAt, ANIMALS } from './animals.js';
 import { renderSVG } from './svgrider.js';
+import { wearHat } from './hats.js';
 
 const REDUCED = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -55,6 +56,14 @@ export class ShopRider {
     loadGsap().catch(() => {});
   }
 
+  /** Puts on hat `id` ('nohat' takes it off). It rides on the head, so it follows every pose and trick. */
+  setHat(id) {
+    if (id === (this.hatId ?? 'nohat')) return;
+    this.hat?.remove();
+    this.hatId = id;
+    this.hat = id && id !== 'nohat' ? wearHat(this.r, this.id, id) : null;
+  }
+
   /** The acting layer for one part, which GSAP tweens and pose() adds to the idle pose. */
   part(name) {
     return (this.act[name] ??= { x: 0, y: 0, r: 0, sx: 1, sy: 1 });
@@ -77,6 +86,7 @@ export class ShopRider {
       if (p.lashes) p.lashes.a = 0;
     }
     this.r.pose(p);
+    this.hat?.animate(t, p);
   }
 
   /** A trick: 'hop' (small, `k` scales it), 'flip' or 'wheelie'. Does nothing while one is playing. */
