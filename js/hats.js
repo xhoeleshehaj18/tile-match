@@ -13,7 +13,7 @@
 // The shop wears them live (shoprider.js); the game draws them into four still frames (hatFrames),
 // simplified for its ~20px hats (`lod: 'small'`). Names live in i18n.js. Prototype: art-lab/hats.html.
 
-import { P, INK, mix, keyPose } from './animals.js';
+import { P, INK, mix, keyPose, poseAt } from './animals.js';
 import { renderSVG } from './svgrider.js';
 import { SHEET } from './painted.js';
 import { surface } from './art.js';
@@ -518,4 +518,29 @@ export function hatThumb(hatId, size) {
     alone.set(key, rasterise(svg, size, size).catch(e => { alone.delete(key); throw e; }));
   }
   return alone.get(key);
+}
+
+/**
+ * Animal `id` in hat `hatId` ('nohat' for none), standing still, as a canvas: the whole rider
+ * `w` CSS pixels wide (the shop's rider cards), or with `close` a head close-up `w` square (the hat
+ * cards). Drawn once through an image, so a grid of them costs no more than pictures.
+ */
+const snaps = new Map();
+export function snapshot(id, hatId, w, close = false) {
+  const key = `${id}:${hatId}:${w}:${close}`;
+  if (!snaps.has(key)) {
+    const r = renderSVG(id, { style: 'rich', shadow: false });
+    r.pose(poseAt(id, 1.8));
+    if (hatId !== 'nohat' && HATS[hatId]) wearHat(r, id, hatId, { lod: 'full' });
+    const svg = r.svg;
+    // a close-up is framed on the crown, so the hat fills it; a whole rider has room for a tall hat
+    const f = FIT[id];
+    const [vx, vy, vw, vh] = close ? [f.x - 30, f.y - 31, 60, 60] : [-6, -16, 112, 160];
+    svg.setAttribute('viewBox', `${vx} ${vy} ${vw} ${vh}`);
+    svg.setAttribute('width', Math.round(w * 2));
+    svg.setAttribute('height', Math.round((w * vh / vw) * 2));
+    svg.removeAttribute('class');
+    snaps.set(key, rasterise(svg, w, (w * vh) / vw).catch(e => { snaps.delete(key); throw e; }));
+  }
+  return snaps.get(key);
 }

@@ -555,7 +555,7 @@ export class Game {
   refreshShop() {
     if (!this.built) return;
     const before = this.riderKey;
-    this.shopDot = shop.giftWaiting;
+    this.shopDot = shop.giftWaiting || shop.hasNew;
     this.makeRider();
     if (this.riderKey !== before) this.hop(1.4);
     // coins going down (spent) show at once; coins coming in fly in once the panels are closed
@@ -674,7 +674,7 @@ export class Game {
     this.scoreSprite = Hud.pill(levels ? (this.mode === 'daily' ? L.dailyPill() : L.level(this.level)) : `{star}${this.score.toLocaleString()}`,
       42 * s, { reuse: this.scoreSprite });
     this.dailyDot = Daily.best(todayKey()) === 0;
-    this.shopDot = shop.giftWaiting;
+    this.shopDot = shop.giftWaiting || shop.hasNew;
     this.updateInfo();
     if (levels) {
       this.bestSprite = null;

@@ -181,6 +181,7 @@ export const L = {
   trails: () => t('Trails', '尾迹'),
   hats: () => t('Hats', '帽子'),
   gifts: () => t('Gifts', '礼物'),
+  newItem: () => t('New', '新'),
   wearIt: () => t('Wear it', '戴上'),
   wearing: () => t('Wearing {check}', '正在戴 {check}'),
   buyShort: () => t('Buy', '买'),

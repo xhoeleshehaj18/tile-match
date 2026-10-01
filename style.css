@@ -343,6 +343,35 @@ html.standalone .overlay { bottom: auto; height: 100lvh; }
   100% { opacity: 0; transform: translateY(-0.625rem); }
 }
 
+/* the compact stage: the scene, then a strip with the name, a line about it and the button.
+   It and the tabs stick to the top while the cards scroll under them. */
+.shop-top {
+  position: sticky;
+  top: -0.25rem;
+  z-index: 2;
+  margin: -0.25rem -1.125rem 0;
+  padding: 0.25rem 1.125rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  background: var(--panel);
+  box-shadow: 0 0.5rem 0.5rem -0.5rem rgba(60, 50, 0, 0.25);
+}
+.shop-stage.compact { background: var(--cream); }
+.stage-info { display: flex; align-items: center; gap: 0.5rem; padding: 0.375rem 0.5rem 0.5rem 0.75rem; border-top: 0.15625rem solid var(--ink); text-align: left; }
+.stage-words { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.0625rem; }
+.stage-info .item-name { margin: 0; font-size: 1.0625rem; line-height: 1.15; text-wrap: balance; }
+.stage-info .item-text, .stage-info .item-note {
+  margin: 0; min-height: 0; font-size: 0.75rem; line-height: 1.3; text-wrap: pretty;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.stage-info .item-text:has(+ .item-note:not([hidden])) { display: none; }
+.stage-info .item-action { flex: none; max-width: 52%; }
+.stage-info .chunky { width: auto; min-width: 5.5rem; --lip-h: 0.3125rem; padding: 0.4375rem 0.75rem calc(0.3125rem + var(--lip-h) + 0.125rem); border-radius: 0.75rem; font-size: 1rem; }
+.stage-info .chunky.locked { padding: 0.375rem 0.5rem 0.5625rem; font-size: 0.75rem; flex-wrap: wrap; gap: 0.25rem; row-gap: 0.125rem; }
+.stage-info .chunky.locked .need { line-height: 1.15; }
+.stage-info .chunky .coin-chip.on-button { font-size: 0.875rem; }
+.stage-info .chunky.buy { gap: 0.375rem; }
 .item-name { margin: 0 0 -0.5rem; font-size: 1.375rem; font-weight: 900; color: var(--title); letter-spacing: -0.01em; }
 .item-text { margin: 0 0.375rem; min-height: 2.7em; font-size: 0.9375rem; font-weight: 700; line-height: 1.35; opacity: 0.7; text-wrap: balance; }
 /* a hat that goes on an animal while the girl rides (she keeps her cap) */
@@ -411,6 +440,13 @@ html.standalone .overlay { bottom: auto; height: 100lvh; }
 /* the hats' legendary crown gets the whole row */
 .item-card.wide { grid-column: 1 / -1; flex-direction: row; justify-content: center; gap: 0.625rem; min-height: 0; padding: 0.375rem 0.75rem 0.625rem; }
 .card-name { font-size: 1rem; font-weight: 900; color: var(--title); }
+.new-ribbon { position: absolute; top: 0.3125rem; left: 0.3125rem; padding: 0.0625rem 0.375rem; border-radius: 99px; background: var(--pink);
+  color: #fff; font-size: 0.625rem; font-weight: 900; letter-spacing: 0.06em; text-transform: uppercase; box-shadow: 0 0 0 0.125rem #fff; }
+/* "new" dots on the tabs, with words for VoiceOver */
+.new-dot { display: inline-block; width: 0.5rem; height: 0.5rem; margin-left: 0.3125rem; border-radius: 50%; background: var(--pink); box-shadow: 0 0 0 0.125rem #fff; vertical-align: 0.15em; }
+.tab .new-dot { position: absolute; top: 0.25rem; right: 22%; margin: 0; }
+.tab { position: relative; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .grid-head { grid-column: 1 / -1; margin: 0.5rem 0.25rem 0; font-size: 1rem; font-weight: 900; color: var(--title); }
 /* gifts: a date until they arrive, then ready to open */
 .item-card.gift { border-style: dashed; }

@@ -277,6 +277,33 @@ export const shop = {
   /** Something waits to be opened: the shop button wears a dot. */
   get giftWaiting() { return this.pendingGifts().length > 0 || this.queue().length > 0; },
 
+  // ------------------------------------------------ what's new
+
+  /**
+   * Everything she has seen in the shop, as 'kind:id'. A save from before this starts with every
+   * rider and trail seen, so only the hats show as new.
+   */
+  seen() {
+    const list = store.json('shop.seen');
+    if (Array.isArray(list)) return list;
+    const start = [...RIDER_ITEMS.map(i => `rider:${i.id}`), ...TRAIL_ITEMS.map(i => `trail:${i.id}`)];
+    store.set('shop.seen', start);
+    return start;
+  },
+  /** The ids of `kind` showing in the shop that she hasn't seen yet (new hats, a gift that arrived). */
+  unseen(kind) {
+    const seen = this.seen();
+    return ITEMS[kind].filter(i => i.price !== 0 && !this.owns(kind, i.id) && (i.price != null || this.giftShown(i)) && !seen.includes(`${kind}:${i.id}`)).map(i => i.id);
+  },
+  get hasNew() { return Object.keys(ITEMS).some(k => this.unseen(k).length > 0); },
+  /** She has looked at the `kind` tab: all of it counts as seen. */
+  markSeen(kind) {
+    const fresh = this.unseen(kind);
+    if (!fresh.length) return;
+    store.set('shop.seen', [...this.seen(), ...fresh.map(id => `${kind}:${id}`)]);
+    emit();
+  },
+
   /** Calls `fn` whenever coins or the equipped items change. */
   onChange(fn) { listeners.add(fn); },
 

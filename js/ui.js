@@ -13,7 +13,7 @@ import { store } from './store.js';
 import { Daily } from './store.js';
 import { todayKey, dailyRules } from './levels.js';
 import { shop, RIDER_ITEMS, HAT_ITEMS, TRAIL_ITEMS, TRY_ON, COINS_PER_LEVEL } from './shop.js';
-import { hatThumb, wearHat } from './hats.js';
+import { wearHat, snapshot } from './hats.js';
 import { noteText } from './notes.js';
 import { riderFrame, riderFrames, frameAt, Trail, trailSprites } from './riders.js';
 import { ShopRider, isAnimal } from './shoprider.js';
@@ -22,6 +22,14 @@ import { poseAt } from './animals.js';
 import { iconEl, rich, splitIcon, uiScale } from './icons.js';
 
 const SHOP_ITEMS = { rider: RIDER_ITEMS, hat: HAT_ITEMS, trail: TRAIL_ITEMS };
+const KINDS = Object.keys(SHOP_ITEMS);
+
+/** A small pink "new" dot, with the word for VoiceOver. */
+function newDot() {
+  const d = h('span', 'new-dot');
+  d.append(h('span', 'sr-only', L.newItem()));
+  return d;
+}
 
 /** Sets an element's text; `{name}` in it becomes that drawn icon (see icons.js). */
 const setText = (el, text) => {
@@ -408,6 +416,8 @@ export class UI {
     this.stopPreview = null;
     m.tab = tab;
     for (const [key, b] of Object.entries(m.tabs)) b.classList.toggle('on', key === tab);
+    m.tabs.shop.querySelector('.new-dot')?.remove();
+    if (tab !== 'shop' && (shop.hasNew || shop.giftWaiting)) m.tabs.shop.append(newDot());
     m.title.textContent = tab === 'play' ? L.paused() : L.tab(tab);
     m.coins.classList.toggle('hidden', tab !== 'shop' && tab !== 'play');
     m.panel.dataset.tab = tab;
@@ -847,20 +857,37 @@ export class UI {
       paint();
     });
     seg.classList.add('wide');
-    const stage = h('div', 'shop-stage');
+    // what's new this visit: marked as it's looked at, so the dots and ribbons last for this visit
+    const fresh = {};
+    const look = k => {
+      fresh[k] ??= new Set(shop.unseen(k));
+      shop.markSeen(k);
+      seg.querySelectorAll('button')[KINDS.indexOf(k)]?.querySelector('.new-dot')?.remove();
+    };
+    KINDS.forEach((k, i) => { if (shop.unseen(k).length) seg.querySelectorAll('button')[i].append(newDot()); });
+    // the stage, with what's chosen and what to do about it on it, stays put while the cards scroll
+    // under it: about 150px, so the grid starts above the fold even on a small phone
+    const stage = h('div', 'shop-stage compact');
     const canvas = h('canvas');
     const ribbon = h('span', 'ribbon', L.legendary());
     const pop = h('span', 'stage-pop', L.yours());
-    stage.append(canvas, ribbon, pop);
+    const info = h('div', 'stage-info');
     const name = h('h2', 'item-name');
     const text = h('p', 'item-text');
     const note = h('p', 'item-note');
     const action = h('div', 'item-action');
+    const words = h('div', 'stage-words');
+    words.append(name, text, note);
+    info.append(words, action);
+    stage.append(canvas, ribbon, pop, info);
+    const top = h('div', 'shop-top');
+    top.append(stage, seg);
     const grid = h('div', 'shop-grid');
-    page.append(seg, stage, name, text, note, action, grid);
-    const preview = this.startPreview(canvas, stage);
+    page.append(top, grid);
+    const preview = this.startPreview(canvas, stage, 0.72);
 
     const paint = () => {
+      look(kind);
       // the gift row: hers, ready to open, earned by playing, and the next one coming
       const items = SHOP_ITEMS[kind].filter(i => i.price != null || shop.giftShown(i));
       const item = items.find(i => i.id === sel) ?? items[0];
@@ -905,7 +932,9 @@ export class UI {
       const cards = [];
       for (const it of items) {
         if (it.gift && !cards.gifts) { cards.gifts = true; cards.push(h('h3', 'grid-head', L.gifts())); }
-        cards.push(this.itemCard(kind, it, it.id === item.id, pick(it)));
+        const card = this.itemCard(kind, it, it.id === item.id, pick(it));
+        if (fresh[kind].has(it.id)) card.append(h('span', 'new-ribbon', L.newItem()));
+        cards.push(card);
       }
       grid.replaceChildren(...cards);
     };
@@ -987,41 +1016,25 @@ export class UI {
     return card;
   }
 
-  /** A card's picture, drawn once and kept: the rider on its scooter, the hat, or a few bits of the trail. */
+  /**
+   * A card's picture, drawn once and kept: an animal in the hat it wears (or, on a hat card, the
+   * model animal's head in that hat), the girl on her scooter, or a few bits of the trail. The
+   * animals are drawn into images lazily, one at a time, as their cards scroll into view.
+   */
   thumb(kind, id) {
     this.thumbs ??= new Map();
     const u = uiScale();
-    const key = `${kind}:${id}:${u}`;
+    const model = shop.model.id;
+    const key = kind === 'hat' ? `hat:${id}:${u}:${model}` : kind === 'rider' ? `rider:${id}:${u}:${shop.hatOn(id)}` : `${kind}:${id}:${u}`;
     let c = this.thumbs.get(key);
     if (c) return c;
-    if (kind === 'hat') {
-      // the hat on its own, drawn into an image once it's ready (no hat: a dotted head)
-      const size = 64 * u;
+    if (kind === 'hat' || (kind === 'rider' && isAnimal(id))) {
+      const hat = kind === 'hat';
+      const w = hat ? 64 * u : 52 * u;
       c = h('span', 'hat-thumb');
-      c.w = c.h = size;
-      if (id === 'nohat') {
-        const [cv, ctx] = surfaceFor(size, size);
-        ctx.scale(u, u);
-        ctx.strokeStyle = 'rgba(30,34,8,0.28)';
-        ctx.lineWidth = 3.5;
-        ctx.lineCap = 'round';
-        ctx.setLineDash([6, 7]);
-        ctx.beginPath();
-        ctx.arc(32, 48, 18, Math.PI, 0);
-        ctx.stroke();
-        cv.style.width = cv.style.height = `${size}px`;
-        c.append(cv);
-      } else {
-        hatThumb(id, size).then(cv => { cv.style.width = cv.style.height = `${size}px`; c.append(cv); }).catch(() => {});
-      }
-    } else if (kind === 'rider' && isAnimal(id)) {
-      // the animals as the same SVG as the stage above, standing still (a moment with open eyes
-      // and every idle move at rest)
-      const r = renderSVG(id, { style: 'rich', size: (64 * u * 100) / 140, shadow: false });
-      r.pose(poseAt(id, 1.8));
-      c = r.svg;
-      c.w = (64 * u * 100) / 140;
-      c.h = (64 * u * 144) / 140;
+      c.w = w;
+      c.h = hat ? w : (w * 160) / 112;
+      this.lazyThumb(c, () => snapshot(hat ? model : id, hat ? id : shop.hatOn(id), w, hat));
     } else if (kind === 'rider') {
       c = riderFrame(id, 64 * u);
     } else {
@@ -1061,13 +1074,44 @@ export class UI {
   }
 
   /**
+   * Fills placeholder `el` with the canvas `make()` resolves to, once it scrolls near the view.
+   * One is drawn at a time, so opening a tab never stalls on twenty pictures at once.
+   */
+  lazyThumb(el, make) {
+    const q = (this.thumbQueue ??= { jobs: [], busy: false });
+    const run = () => {
+      if (q.busy || !q.jobs.length) return;
+      q.busy = true;
+      const [target, job] = q.jobs.shift();
+      job().then(cv => {
+        cv.style.width = `${target.w}px`;
+        cv.style.height = `${target.h}px`;
+        target.replaceChildren(cv);
+      }).catch(() => {}).finally(() => { q.busy = false; setTimeout(run, 0); });
+    };
+    this.thumbSeen ??= typeof IntersectionObserver === 'function'
+      ? new IntersectionObserver(entries => {
+        for (const e of entries) {
+          if (!e.isIntersecting) continue;
+          this.thumbSeen.unobserve(e.target);
+          q.jobs.push([e.target, e.target.make]);
+        }
+        run();
+      }, { rootMargin: '200px' })
+      : null;
+    el.make = make;
+    if (this.thumbSeen) this.thumbSeen.observe(el);
+    else { q.jobs.push([el, make]); run(); }
+  }
+
+  /**
    * The shop's stage: sky, a road that scrolls, and the rider bobbing along with its trail. The
    * animals are live SVG that do tricks (shoprider.js); the girl is drawn in the canvas. Runs only
    * while the shop tab is showing. Returns { show(rider, trail, hat), hop(), celebrate() }.
    */
-  startPreview(canvas, stage) {
+  startPreview(canvas, stage, scale = 1) {
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    const u = uiScale();
+    const u = uiScale() * scale;
     const H = 136 * u, RIDER = 104 * u, ROAD = 34 * u;
     const s = RIDER / 132;
     let W = 0, raf = 0, riderId = null, frames = null, trail = null, trailId = null;
