@@ -898,6 +898,8 @@ export class UI {
         sound.play('tap', { gain: 0.6 });
         paint();
         preview.hop(0.7);
+        // trying on a hat: it drops onto the head
+        if (kind === 'hat') preview.dropHat();
       };
       // for sale in price order, then the gifts in their own row; nothing moves after a purchase
       const cards = [];
@@ -1162,6 +1164,7 @@ export class UI {
         actor?.setHat(hat);
         if (trailName !== trailId) { trailId = trailName; trail = trailName === 'none' ? null : new Trail(trailName, s); }
       },
+      dropHat() { actor?.dropHat(); },
       hop(k = 1) {
         if (actor) actor.trick('hop', k);
         else { hopT0 = performance.now() / 1000; hopH = 10 * k * u; }

@@ -64,6 +64,9 @@ export class ShopRider {
     this.hat = id && id !== 'nohat' ? wearHat(this.r, this.id, id) : null;
   }
 
+  /** The hat just put on drops onto the head (as soon as the hat shows; with reduced motion it simply appears). */
+  dropHat() { this.hat?.react('drop'); }
+
   /** The acting layer for one part, which GSAP tweens and pose() adds to the idle pose. */
   part(name) {
     return (this.act[name] ??= { x: 0, y: 0, r: 0, sx: 1, sy: 1 });
@@ -94,6 +97,7 @@ export class ShopRider {
     const gsap = window.gsap;
     if (!gsap || this.busy || REDUCED) return;
     this.busy = true;
+    this.hat?.react(kind);
     const rider = this.part('rider'), head = this.part('head'), body = this.r.svg, u = this.height / 140;
     const tl = gsap.timeline({ onComplete: () => { this.busy = false; } });
     this.tl = tl;
@@ -109,18 +113,20 @@ export class ShopRider {
         .to(rider, { sx: 1, sy: 1, duration: 0.7, ease: 'elastic.out(1.2, 0.35)' }, 1.38);
     } else {
       const flip = kind === 'flip';
+      // the propeller cap gives a hop about 20% more height, and it floats down
+      const fly = this.hatId === 'propeller', hang = fly ? 0.22 : 0;
       // the shop's stage is short: jump just high enough to read, and keep the flip inside it
-      const up = (flip ? 30 : 18 * k) * u;
+      const up = (flip ? 30 : 18 * k) * u * (fly ? 1.2 : 1);
       tl.to(body, { y: -up, duration: 0.42, ease: 'power2.out' }, 0.12)
         .to(rider, { sx: 0.9, sy: 1.14, duration: 0.14, ease: 'power2.out' }, 0.12)
         .to(rider, { sx: 1, sy: 1, duration: 0.3, ease: 'sine.inOut' }, 0.26)
-        .to(body, { y: 0, duration: 0.38, ease: 'power2.in' }, 0.54)
-        .to(rider, { sx: 1.18, sy: 0.8, duration: 0.07, ease: 'power1.out' }, 0.92)
-        .to(rider, { sx: 1, sy: 1, duration: 0.8, ease: 'elastic.out(1.2, 0.32)' }, 0.99);
+        .to(body, { y: 0, duration: 0.38 + hang, ease: fly ? 'sine.inOut' : 'power2.in' }, 0.54)
+        .to(rider, { sx: 1.18, sy: 0.8, duration: 0.07, ease: 'power1.out' }, 0.92 + hang)
+        .to(rider, { sx: 1, sy: 1, duration: 0.8, ease: 'elastic.out(1.2, 0.32)' }, 0.99 + hang);
       if (flip) tl.to(body, { rotation: -360, transformOrigin: '50% 62%', duration: 0.78, ease: 'power1.inOut' }, 0.14).set(body, { rotation: 0 });
       // the head lags on the way up and nods on landing
       tl.to(head, { y: 2, r: 0.06, duration: 0.2 }, 0.12).to(head, { y: -2, r: -0.04, duration: 0.3 }, 0.5)
-        .to(head, { y: 0, r: 0, duration: 0.7, ease: 'elastic.out(1, 0.35)' }, 0.95);
+        .to(head, { y: 0, r: 0, duration: 0.7, ease: 'elastic.out(1, 0.35)' }, 0.95 + hang);
     }
     if (kind !== 'hop' || k >= 1) SPECIAL[this.id]?.(this, tl);
     tl.set(this, { happy: 0 }, '+=0.25');
