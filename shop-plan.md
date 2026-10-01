@@ -9,7 +9,7 @@ This plan for Tile Match combines six research lenses (hats, market, UX, categor
 - **Lens ideas:** ideas the critics cut are gone, and their suggested changes are applied.
 - **iOS port:** the SwiftUI/SpriteKit port in `TileMatch/` is out of scope. It has no shop and doesn't share save data with the web version.
 
-**Progress (updated 2026‑10‑01):** Phase 1 code is done and released locally as **v30** (not committed). What's left before it reaches her is testing on real devices and the proofread. See the marks in §7 and the "phase" column of §2.
+**Progress (updated 2026‑10‑01):** Phase 1 shipped as **v30**. Phase 2 and the Phase 3 categories are coded as **v31** (branch `claude/shop-plan-implementation-13cqj5`), checked in desktop Chromium at phone size. Still open: real-device testing, the native-speaker proofread, and the decisions only you can make (her birthday and anniversary in `../private/notes.json`, your notes, her 冬至 tradition, the girl's cap, prices against her balance). See the marks in §7 and the "phase" column of §2.
 ✅ done · 🟡 partly done or only checked in the desktop browser · ⬜ not started · ❓ waiting on your decision
 
 **Effort scale:** **XS** under 1h · **S** 1–3h · **M** half a day to a day · **L** several days.
@@ -257,15 +257,15 @@ The existing tall hats on the unicorn (chef, top hat, santa) are already checked
 | 4 | `itemButton` / `itemCard` would treat `price: null` as affordable (`shop.coins >= null` is true) | Check `item.price == null` first; gift cards show the date teaser, "Open", or owned | `ui.js itemButton`, `itemCard` | ✅ XS · P1 |
 | 5 | Too-expensive cards are already dimmed (`style.css:393` `.locked .thumb-art`, `:400` `.locked .card-price`), but an **affordable** card looks like an owned-but-unworn one apart from the price chip, and the difference is colour only | Add `.item-card.affordable` with a soft gold ring **plus a non-colour cue**: the price chip reads "● 250 · 买 Buy", or a small "+" badge. Leave `.locked` as it is. | `style.css` (~393–400) | ✅ XS · P1 |
 | 6 | Cards are `<button>`s with only a canvas/SVG and a price chip, and no accessible name; hats add about 22 more | `aria-label` from `L.itemName(id)` plus the state: worn, owned, price, or gift date (e.g. "毛线帽, 正在戴" / "Knit beanie, wearing") | `ui.js itemCard` | ✅ S · P1 |
-| 7 | Hat thumbs need art | **P1:** the hat alone (its kit SVG in a small viewBox around the crown origin), rasterised once through the `hatFrames` image path, key `hat:${id}:${u}`. **P2:** head close-ups of the model animal (viewBox `2 -6 96 96`, as in the prototype's `&close`), key `hat:${id}:${u}:${modelAnimal}`; rider thumbs show each animal in its own saved hat, key `rider:${id}:${u}:${hats[id]}`. | `ui.js thumb` (~927) | S · P1 ✅, M · P2 ⬜ |
-| 8 | About 22 full `renderSVG` riders as thumbs, each with an `feGaussianBlur` per solid plus clipPaths, would make the grid and stage stutter on her iPhone | Rasterise each thumb once to an image (same path as `hatFrames`), or use style `'flat'` for thumbs. Build them lazily, as cards scroll into view or at idle time, and test on her phone model. | `ui.js thumb` | ⬜ S · P2 |
-| 9 | The block above the grid is the segmented control, the stage canvas (already `H = 136·u` px), the name, the description and the button. Together that is about 370px of the ~478px menu body at 375×667, so the grid starts below the fold. | Put the name, action button and a one-line caption on the stage, shrink the canvas, and make the whole block sticky at about 150px | `ui.js shopPage`, `style.css` | ⬜ M · P2 |
-| 10 | Nothing marks new items | A `shop.seen` list, a "new" dot on the 帽子 tab and the menu shop button (same pattern as the daily dot at ~665/~2326), and a "New" ribbon on unseen cards. Each dot carries visually hidden text ("新" / "new"). | `shop.js`, `ui.js`, `game.js`, `style.css` | ⬜ S · P2 |
-| 11 | The gift popup handles only the starter gift, and only when the shop exists | **P1:** a hard-coded check for the beanie and witch hat. **P2:** a queue, where `shop.grant(kind, id, reason)` queues `{kind, id, reason, noteId}`. Both show **on app open**, through the retry loop `maybeShowShopGift` already has (it waits while `anyOpen`, `breakKind`, `welcomeWaiting`, `game.drag` or `game.finishing`, re-checking every 2.5s). A dot stays on the shop button while a gift is unclaimed. Priority order is below. | `ui.js maybeShowShopGift` (~1114), `shop.js` | S · P1 ✅, M · P2 ⬜ |
+| 7 | Hat thumbs need art | **P1:** the hat alone (its kit SVG in a small viewBox around the crown origin), rasterised once through the `hatFrames` image path, key `hat:${id}:${u}`. **P2:** head close-ups of the model animal (viewBox `2 -6 96 96`, as in the prototype's `&close`), key `hat:${id}:${u}:${modelAnimal}`; rider thumbs show each animal in its own saved hat, key `rider:${id}:${u}:${hats[id]}`. | `ui.js thumb` (~927) | S · P1 ✅, M · P2 ✅ |
+| 8 | About 22 full `renderSVG` riders as thumbs, each with an `feGaussianBlur` per solid plus clipPaths, would make the grid and stage stutter on her iPhone | Rasterise each thumb once to an image (same path as `hatFrames`), or use style `'flat'` for thumbs. Build them lazily, as cards scroll into view or at idle time, and test on her phone model. | `ui.js thumb` | ✅ S · P2 (`snapshot()` + `lazyThumb()`) |
+| 9 | The block above the grid is the segmented control, the stage canvas (already `H = 136·u` px), the name, the description and the button. Together that is about 370px of the ~478px menu body at 375×667, so the grid starts below the fold. | Put the name, action button and a one-line caption on the stage, shrink the canvas, and make the whole block sticky at about 150px | `ui.js shopPage`, `style.css` | ✅ M · P2 (block is ~225px with the tabs) |
+| 10 | Nothing marks new items | A `shop.seen` list, a "new" dot on the 帽子 tab and the menu shop button (same pattern as the daily dot at ~665/~2326), and a "New" ribbon on unseen cards. Each dot carries visually hidden text ("新" / "new"). | `shop.js`, `ui.js`, `game.js`, `style.css` | ✅ S · P2 |
+| 11 | The gift popup handles only the starter gift, and only when the shop exists | **P1:** a hard-coded check for the beanie and witch hat. **P2:** a queue, where `shop.grant(kind, id, reason)` queues `{kind, id, reason, noteId}`. Both show **on app open**, through the retry loop `maybeShowShopGift` already has (it waits while `anyOpen`, `breakKind`, `welcomeWaiting`, `game.drag` or `game.finishing`, re-checking every 2.5s). A dot stays on the shop button while a gift is unclaimed. Priority order is below. | `ui.js maybeShowShopGift` (~1114), `shop.js` | S · P1 ✅, M · P2 ✅ |
 | 12 | Gift hats have no "claim" state | Gift card states: a teaser ("10.31") before the date, "Open" after it, owned after claiming. Free and never expires. | `ui.js itemCard`, `itemButton` | ✅ S · P1 |
 | 13 | The legendary card is marked only by a ribbon | Make the crown card full width in the grid | `style.css .shop-grid` | ✅ XS · P1 |
 | 14 | Bug reports don't include the hat | Add `hat: shop.hat` next to `rider` and `trail` | `game.js` (~1957) | ✅ XS · P1 |
-| 15 | `sw.js` caches `riders/*.webp` in the versioned `CACHE`, and `activate()` deletes it on every release, so each release re-downloads the sheet she wears | A persistent `'tile-match-riders'` cache, kept across updates like `PHOTOS`, with content-versioned filenames (`riders/bunny.<hash>.webp`) so changed art still refreshes | `sw.js`, `painted.js` | ⬜ S · P2 |
+| 15 | `sw.js` caches `riders/*.webp` in the versioned `CACHE`, and `activate()` deletes it on every release, so each release re-downloads the sheet she wears | A persistent `'tile-match-riders'` cache, kept across updates like `PHOTOS`, with content-versioned filenames (`riders/bunny.<hash>.webp`) so changed art still refreshes | `sw.js`, `painted.js` | ✅ S · P2 (`tools/riders.mjs` names the sheets) |
 
 **Panel priority on app open** (proposed; each waits for the ones above it to close, using the existing retry loop):
 
@@ -590,6 +590,12 @@ To test dates on an iPhone, use Safari in the iOS Simulator, which reaches `loca
 
 Date-bound items come first. If time runs short, items 6–7 slide into January.
 
+**Status (v31):** all seven items ✅ in code. ⬜ Still to do by hand: fitting-room passes on a phone, the proofread, writing `../private/notes.json` (her birthday and anniversary as YYYY-MM-DD, your notes) and running `node tools/notes.mjs`, and testing on her iPhone. Decisions taken where the plan left a choice:
+- 冬至 gives the **dumpling** hat and 元宵 the **tangyuan** hat (the third option in §5), so both traditions get theirs. Swap the two `gift` lines in `js/dates.js` if hers is the other way.
+- Notes and her dates are **one** encrypted bundle, `notes/notes.bin`, not a file per note: simpler, and it gives away nothing more.
+- Mystery gifts and level 100 count on the Big board too (by its own level), once per level.
+- The cake hat's card only appears once her birthday is known (from the bundle); until then it's hidden, so the public site never hints at the date.
+
 1. **By 12‑20:**
    - The 冬至 hat (dumpling or tangyuan, per her tradition) and the santa hat, each with a fitting-room pass on all 6 animals.
    - The generalised gift queue (`shop.grant()`) with the panel priority order.
@@ -603,6 +609,8 @@ Date-bound items come first. If time runs short, items 6–7 slide into January.
 7. Achievements: nightcap, graduation cap, halo (guarded rule). Mystery gifts every 25 levels (commons only). `report.ping()` and "send a heart back".
 
 ### Phase 3: January to February 2027 and beyond
+
+**Status (v31):** ✅ goat headband (with the ear and horn overrides; no horns on the unicorn), LNY lanterns with an upright 福, the Valentine's/520/七夕 notes (they need your text in the bundle), the tangyuan hat on 元宵, the cake hat and anniversary note, house decor as a category with the mailbox note, the chip rail, match pops, 3 tile looks, the arrival flourish, and the pumpkin cap for Halloween 2027. ⬜ Not done: the optional watercolour port (needs `art-lab/`, not in this repo) and the girl's cap (your call).
 
 1. Goat-horn headband (after its fitting pass, with the ear and horn overrides) and LNY lanterns with an upright 福, shipped in late January for 02‑05. Valentine's note on 02‑14. Lantern Festival on 02‑20, with the tangyuan hat if it moved there.
 2. Cake hat and anniversary touches, if her dates fall in February or later.
