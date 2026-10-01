@@ -37,6 +37,8 @@ const KEYS = [
   'shop.hats', 'shop.claimed', 'shop.lastAnimal',
   // v31: gifts waiting for their popup, what she has seen in the shop, the mystery gifts given
   'shop.queue', 'shop.seen', 'shop.mystery',
+  // v31: the house, the match pops and the tile look
+  'shop.decor', 'shop.pop', 'shop.tile',
 ];
 const isBoard = k => k === 'board' || k.endsWith('.board');
 

@@ -61,6 +61,30 @@ export const TRAIL_ITEMS = [
   { id: 'rainbow', price: 1500, legendary: true },
 ];
 
+/** Things on the house (it also dresses itself for the festivals, for free: see dates.js). */
+export const DECOR_ITEMS = [
+  { id: 'nodecor', price: 0 },
+  { id: 'flowerbox', price: 300 },
+  { id: 'lights', price: 500 },
+  { id: 'mailbox', price: 600 }, // with a letter: tapping it opens a note from him
+];
+
+/** What flies out of a cleared pair (snowflakes in December and red paper at the new year are free). */
+export const POP_ITEMS = [
+  { id: 'pop-leaf', price: 0 }, // not 'petals' or 'hearts': those are trails, and names are keyed by id
+  { id: 'pop-petal', price: 300 },
+  { id: 'pop-heart', price: 380 },
+  { id: 'pop-star', price: 600 },
+];
+
+/** How the tiles look. Every one keeps the emoji easy to read, and the lit tile stays yellow. */
+export const TILE_ITEMS = [
+  { id: 'tile-classic', price: 0 },
+  { id: 'tile-cream', price: 500 },
+  { id: 'tile-strawberry', price: 680 },
+  { id: 'tile-jelly', price: 900 },
+];
+
 /** In the order the shop shows them: no hat, those for sale by price, then the gifts. */
 export const HAT_ITEMS = [
   { id: 'nohat', price: 0 }, // not 'none': names in i18n.js are keyed by id alone, and trails have 'none'
@@ -99,7 +123,8 @@ export const MYSTERY_COINS = 300;
 /** The animal a hat goes on when the rider is the girl and she has never ridden one: a try-on. */
 export const TRY_ON = 'bunny';
 
-const ITEMS = { rider: RIDER_ITEMS, hat: HAT_ITEMS, trail: TRAIL_ITEMS };
+/** Every kind of thing in the shop, in the order of its tabs. */
+export const ITEMS = { rider: RIDER_ITEMS, hat: HAT_ITEMS, trail: TRAIL_ITEMS, decor: DECOR_ITEMS, pop: POP_ITEMS, tile: TILE_ITEMS };
 /** Roughly what one level pays, for "≈ N levels to go". */
 export const COINS_PER_LEVEL = 65;
 
@@ -115,9 +140,14 @@ export const shop = {
     const id = localStorage.getItem('shop.rider');
     return id && this.owns('rider', id) ? id : 'girl';
   },
-  get trail() {
-    const id = localStorage.getItem('shop.trail');
-    return id && this.owns('trail', id) ? id : 'none';
+  get trail() { return this.worn('trail'); },
+  get decor() { return this.worn('decor'); },
+  get pop() { return this.worn('pop'); },
+  get tile() { return this.worn('tile'); },
+  /** The `kind` in use: what she chose, if it's still hers, or the free one. */
+  worn(kind) {
+    const id = localStorage.getItem(`shop.${kind}`);
+    return id && this.owns(kind, id) ? id : ITEMS[kind][0].id;
   },
   /** The hat on the rider in use ('nohat' for the girl, who keeps her cap). */
   get hat() { return this.hatOn(this.rider); },

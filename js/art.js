@@ -13,6 +13,7 @@ export const C = {
   button: '#1E96FB', buttonSide: '#1F6FA8',
   gold: '#FFC21A',
 };
+const C0 = C;
 
 export const FONT = 'ui-rounded, "SF Pro Rounded", -apple-system, system-ui, "PingFang SC", sans-serif';
 const EMOJI_FONT = '"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
@@ -66,7 +67,16 @@ function radialGlow(ctx, cx, cy, r, inner, outer) {
 
 // ---------------------------------------------------------------- tiles
 
-export function tile(w, h, style) {
+/** The tile looks she can buy (the lit tile stays yellow in every one, so a selection always reads). */
+export const TILE_STYLES = {
+  'tile-classic': {},
+  'tile-cream': { faceTop: '#FFFCF2', faceBottom: '#FFEFD2', side: '#E9B566', sideDark: '#B07E36' },
+  'tile-strawberry': { faceTop: '#FFF7FA', faceBottom: '#FFE0EB', side: '#FF8DB3', sideDark: '#C9567F' },
+  'tile-jelly': { faceTop: '#F7F5FF', faceBottom: '#E4DEFF', side: '#9D8CF2', sideDark: '#6A5AC4' },
+};
+
+export function tile(w, h, style, look = 'tile-classic') {
+  const C = { ...C0, ...TILE_STYLES[look] };
   const [c, ctx] = surface(w, h);
   const lw = Math.max(1, w * 0.035);
   const side = h * 0.1;
@@ -344,11 +354,17 @@ export function girl(height) {
   return c;
 }
 
-/** Small two-storey house with a teal roof, drawn in a 90×80 design space. */
-export function house(height) {
-  const k = height / 80;
-  const [c, ctx] = surface(90 * k, 80 * k);
+/**
+ * Small two-storey house with a teal roof, drawn in a 90×80 design space (`height` is those 80
+ * units; the sprite has room above for what sits on the roof, and stands on the same bottom edge).
+ * `decor` lists what it wears: the day's (pumpkin, snow, lanterns, moon, steam, candle) and the one
+ * she bought (flowerbox, lights, mailbox). Bold shapes only: the whole house is ~50px wide.
+ */
+export function house(height, decor = []) {
+  const k = height / 80, TOP = 16;
+  const [c, ctx] = surface(90 * k, (80 + TOP) * k);
   ctx.scale(k, k);
+  ctx.translate(0, TOP);
   const shape = (build, fill, lw = 2.4) => {
     ctx.beginPath();
     build();
@@ -359,11 +375,23 @@ export function house(height) {
     ctx.stroke();
   };
   const rect = (x, y, w, h) => () => ctx.rect(x, y, w, h);
+  const oval = (x, y, rx, ry) => () => ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+  const has = d => decor.includes(d);
+  if (has('steam')) { // 冬至: a chimney, steaming
+    shape(rect(60, -2, 9, 14), '#B9583A', 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    for (const [x, y, r] of [[64.5, -6.5, 3], [67.5, -11.5, 3.6], [71.5, -16.5, 4.2]]) { ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); }
+  }
   shape(rect(4, 70, 82, 8), '#8E7A5A');
   shape(rect(10, 30, 70, 42), '#FFFFFF');
   shape(() => { ctx.moveTo(4, 34); ctx.lineTo(22, 6); ctx.lineTo(68, 6); ctx.lineTo(86, 34); ctx.closePath(); }, '#2E8C7C');
   ctx.fillStyle = '#4FB3A2';
   ctx.fillRect(24, 9, 42, 3);
+  if (has('snow')) shape(() => {
+    ctx.moveTo(2, 35); ctx.lineTo(21, 4); ctx.lineTo(69, 4); ctx.lineTo(88, 35);
+    for (const [x, y] of [[82, 33], [78, 28], [74, 31], [66, 14], [58, 18], [50, 13], [40, 17], [30, 13], [22, 17], [16, 29], [12, 26], [7, 34]]) ctx.lineTo(x, y);
+    ctx.closePath();
+  }, '#FFFFFF', 2);
   for (const [x, y] of [[16, 38], [32, 38], [58, 38], [16, 54], [32, 54]]) {
     shape(rect(x, y, 12, 10), '#3F82DB', 1.8);
     ctx.beginPath();
@@ -375,8 +403,71 @@ export function house(height) {
   }
   shape(rect(54, 48, 20, 4), '#B9C4CC', 1.6);
   shape(rect(58, 56, 12, 16), '#9A5A2E', 1.8);
+  ctx.fillStyle = '#FFD23F';
+  ctx.beginPath(); ctx.arc(67.5, 64.5, 1.1, 0, Math.PI * 2); ctx.fill();
+
+  if (has('lights')) { // string lights along the eaves
+    ctx.beginPath(); ctx.moveTo(6, 33); ctx.quadraticCurveTo(25, 41, 45, 34); ctx.quadraticCurveTo(65, 41, 84, 33);
+    ctx.strokeStyle = C.outline; ctx.lineWidth = 1.2; ctx.stroke();
+    ['#FF5C8A', '#FFD23F', '#6FD1FF', '#8BE36B', '#C3A2FF', '#FF8A3D', '#FF5C8A', '#FFD23F', '#6FD1FF'].forEach((col, i) => {
+      const u = (i + 0.5) / 9, x = 6 + 78 * u, half = u < 0.5 ? u * 2 : (u - 0.5) * 2;
+      shape(oval(x, 34 + 6 * half * (1 - half) * 2 + 1.5, 2.2, 2.8), col, 1.2);
+    });
+  }
+  if (has('flowerbox')) { // under the two lower windows
+    shape(rect(14, 64.5, 32, 5), '#B9783E', 1.8);
+    [[17, '#FF7FA8'], [22, '#FFD23F'], [27, '#FF7FA8'], [33, '#C3A2FF'], [38, '#FFD23F'], [43, '#FF7FA8']].forEach(([x, col]) => shape(oval(x, 63, 2.4, 2.4), col, 1.2));
+  }
+  if (has('mailbox')) { // by the door, with a letter for her
+    shape(rect(80.5, 56, 3, 15), '#8E6A43', 1.4);
+    shape(() => { ctx.moveTo(75, 58); ctx.lineTo(75, 50); ctx.quadraticCurveTo(82, 44, 89, 50); ctx.lineTo(89, 58); ctx.closePath(); }, '#FF6F7F', 1.8);
+    shape(() => { ctx.moveTo(78, 50); ctx.lineTo(80, 42); ctx.lineTo(87, 43); ctx.lineTo(85, 51); ctx.closePath(); }, '#FFF4E4', 1.4);
+    ctx.fillStyle = '#FF5C8A'; ctx.beginPath(); ctx.arc(82.4, 46.8, 1.4, 0, Math.PI * 2); ctx.fill();
+  }
+  if (has('pumpkin')) { // by the door
+    shape(oval(48, 66, 8.5, 6.5), '#FFA630', 2);
+    ctx.strokeStyle = 'rgba(150,70,0,0.55)'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(48, 60); ctx.lineTo(48, 72); ctx.stroke();
+    shape(rect(47, 57, 2.4, 3.6), '#7A4A1C', 1.2);
+    ctx.fillStyle = C.outline;
+    ctx.beginPath(); ctx.moveTo(43, 64); ctx.lineTo(45, 62); ctx.lineTo(46.5, 64.5); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(49.5, 64.5); ctx.lineTo(51, 62); ctx.lineTo(53, 64); ctx.fill();
+    ctx.lineWidth = 1.3; ctx.beginPath(); ctx.moveTo(43.5, 67.5); ctx.quadraticCurveTo(48, 70.5, 52.5, 67.5); ctx.stroke();
+  }
+  if (has('snow')) { // and a wreath on the door
+    ctx.beginPath(); ctx.arc(64, 62, 4.2, 0, Math.PI * 2); ctx.strokeStyle = C.outline; ctx.lineWidth = 4.4; ctx.stroke();
+    ctx.strokeStyle = '#3FA45B'; ctx.lineWidth = 2.6; ctx.stroke();
+    shape(oval(64, 66.5, 2, 1.4), '#E2394E', 1);
+  }
+  if (has('lanterns')) { // red lanterns at the eaves, and an upright 福 on the door
+    for (const x of [14, 76]) {
+      ctx.strokeStyle = C.outline; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(x, 33); ctx.lineTo(x, 37); ctx.stroke();
+      shape(oval(x, 42, 5.5, 5), '#E2394E', 1.8);
+      shape(rect(x - 2.5, 36.5, 5, 1.6), '#FFD23F', 1);
+      ctx.strokeStyle = '#FFD23F'; ctx.lineWidth = 1.4; ctx.beginPath(); ctx.moveTo(x, 47); ctx.lineTo(x, 51); ctx.stroke();
+    }
+    shape(() => { ctx.moveTo(64, 57); ctx.lineTo(69, 62); ctx.lineTo(64, 67); ctx.lineTo(59, 62); ctx.closePath(); }, '#E2394E', 1.2);
+    ctx.fillStyle = '#FFD23F'; ctx.font = `900 6px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('福', 64, 62.3);
+  }
+  if (has('moon')) { // 中秋: a lantern by the door and a little rabbit
+    shape(oval(51, 64, 4.5, 5.5), '#FFB23F', 1.8);
+    ctx.strokeStyle = C.outline; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(51, 58.5); ctx.lineTo(51, 55); ctx.stroke();
+    shape(oval(42, 67.5, 4.5, 3.6), '#FFFFFF', 1.6);
+    shape(oval(40.5, 61, 1.3, 4), '#FFFFFF', 1.3);
+    shape(oval(43.5, 61, 1.3, 4), '#FFFFFF', 1.3);
+    ctx.fillStyle = '#FF7FA8'; ctx.beginPath(); ctx.arc(44, 67, 0.8, 0, Math.PI * 2); ctx.fill();
+  }
+  if (has('candle')) { // her birthday: a candle on the roof
+    shape(rect(42, -8, 6, 14), '#FF9CC2', 1.8);
+    ctx.fillStyle = '#FFFFFF'; ctx.fillRect(43, -4, 4, 1.6); ctx.fillRect(43, 1, 4, 1.6);
+    shape(() => { ctx.moveTo(45, -18); ctx.quadraticCurveTo(49.5, -12, 45, -9.5); ctx.quadraticCurveTo(40.5, -12, 45, -18); }, '#FFB23F', 1.4);
+  }
   return c;
 }
+
+/** Where the house's door is and its height, in the sprite's own units (for the arrival flourish). */
+export const HOUSE_DOOR = { x: 58, y: 56 + 16, w: 12, h: 16, units: 96, roofX: 45, roofY: 6 + 16 };
 
 // ---------------------------------------------------------------- effects
 
@@ -398,6 +489,57 @@ export function leaf(size) {
   ctx.lineTo(w * 0.8, m);
   ctx.lineWidth = Math.max(0.8, size * 0.05);
   ctx.stroke();
+  return c;
+}
+
+/**
+ * What flies out of a cleared pair: leaves (her default), or a pop she bought, or the season's
+ * (snowflakes in December, red paper at the new year). Same size and shape budget as the leaf.
+ */
+export function pop(kind, size) {
+  if (kind === 'pop-leaf' || !kind) return leaf(size);
+  const w = size, h = size * 0.72, m = h / 2;
+  const [c, ctx] = surface(w, h);
+  const ink = (fill, lw = Math.max(1, size * 0.07)) => { ctx.fillStyle = fill; ctx.fill(); ctx.strokeStyle = C.outline; ctx.lineWidth = lw; ctx.stroke(); };
+  if (kind === 'pop-petal') {
+    ctx.beginPath();
+    ctx.moveTo(1.5, m);
+    ctx.bezierCurveTo(w * 0.35, -m * 0.3, w * 0.95, m * 0.2, w - 1.5, m);
+    ctx.bezierCurveTo(w * 0.95, m * 1.8, w * 0.35, h * 1.3, 1.5, m);
+    ink('#FFC2D8');
+  } else if (kind === 'pop-heart') {
+    const r = h * 0.42, x = w / 2, y = m;
+    ctx.beginPath();
+    ctx.moveTo(x, y + r * 0.95);
+    ctx.bezierCurveTo(x - r * 1.5, y + r * 0.05, x - r * 0.9, y - r * 1.15, x, y - r * 0.35);
+    ctx.bezierCurveTo(x + r * 0.9, y - r * 1.15, x + r * 1.5, y + r * 0.05, x, y + r * 0.95);
+    ink('#FF7FA8');
+  } else if (kind === 'pop-star' || kind === 'snow') {
+    const r = h * 0.48, x = w / 2, y = m;
+    ctx.beginPath();
+    if (kind === 'pop-star') {
+      for (let i = 0; i < 10; i++) {
+        const a = -Math.PI / 2 + (i * Math.PI) / 5, rr2 = i % 2 ? r * 0.45 : r;
+        ctx.lineTo(x + Math.cos(a) * rr2, y + Math.sin(a) * rr2);
+      }
+      ctx.closePath();
+      ink('#FFE14A');
+    } else {
+      for (let i = 0; i < 3; i++) {
+        const a = (i * Math.PI) / 3;
+        ctx.moveTo(x - Math.cos(a) * r, y - Math.sin(a) * r);
+        ctx.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r);
+      }
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = '#5A8FD0'; ctx.lineWidth = Math.max(2, size * 0.16); ctx.stroke();
+      ctx.strokeStyle = '#FFFFFF'; ctx.lineWidth = Math.max(1, size * 0.08); ctx.stroke();
+    }
+  } else if (kind === 'confetti') {
+    rr(ctx, w * 0.18, h * 0.2, w * 0.64, h * 0.6, size * 0.06);
+    ink('#E2394E', Math.max(1, size * 0.05));
+    ctx.fillStyle = '#FFD23F';
+    ctx.fillRect(w * 0.18, h * 0.44, w * 0.64, h * 0.12);
+  }
   return c;
 }
 

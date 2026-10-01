@@ -651,6 +651,9 @@ html.standalone .overlay { bottom: auto; height: 100lvh; }
   transition: background 0.15s, box-shadow 0.15s;
 }
 .segmented button.on { background: #fff; box-shadow: 0 0 0 0.125rem var(--ink), 0 0.125rem 0 0.125rem var(--ink); color: var(--title); font-weight: 800; }
+.segmented.rail { display: flex; overflow-x: auto; scrollbar-width: none; padding: 0.25rem 0.25rem 0.375rem; border-radius: 0.75rem; scroll-padding: 0.5rem; }
+.segmented.rail::-webkit-scrollbar { display: none; }
+.segmented.rail button { flex: none; padding: 0.5rem 0.875rem; border-radius: 0.5625rem; font-size: 0.9375rem; font-weight: 700; white-space: nowrap; }
 .segmented.wide { padding: 0.1875rem; border-radius: 0.75rem; }
 /* grow from each label's own width, so every option gets the same breathing room */
 .segmented.wide button { flex: 1 1 auto; padding: 0.5625rem 0.375rem; border-radius: 0.5625rem; font-size: 0.9375rem; font-weight: 700; letter-spacing: 0.005em; }

@@ -16,6 +16,8 @@ import { paintedFrames, pickFrame } from './painted.js';
 import { hatFrames } from './hats.js';
 import * as Hud from './hud.js';
 import { shop, levelCoins, challengeCoins } from './shop.js';
+import { today, decorOn } from './dates.js';
+import { personalDate, notesLoaded } from './notes.js';
 
 // Board size per mode. Big was chosen by rendering 11×15 up to 14×20 on phone-sized screens: at
 // 12×17 a tile is still ~30 pt on a standard iPhone (about the size of body-text emoji), and one
@@ -214,6 +216,9 @@ export class Game {
     shop.onChange(() => this.refreshShop());
     this.loadState();
     photos.loaded.then(() => this.checkAchievements()).catch(() => {});
+    // her birthday candle needs her dates; a new day may bring the house a festival's decoration
+    notesLoaded.then(() => this.dressScene());
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') this.dressScene(); });
 
     this.bindInput();
     this.last = now();
@@ -384,18 +389,12 @@ export class Game {
     // scenery: the road's bottom edge sits just above the board
     const roadBottom = this.boardRect.y - 5 * s;
     const roadHeight = 50 * s;
-    const [bg, bctx] = Art.surface(W, H);
-    bctx.fillStyle = Art.C.grass;
-    bctx.fillRect(0, 0, W, H);
-    Art.drawBackdrop(bctx, W, roadBottom, roadBottom - roadHeight, s);
-    const house = Art.house(70 * s);
-    this.houseX = W - 139 * s;
-    bctx.drawImage(house, this.houseX - house.w / 2, roadBottom - roadHeight - 12 * s - house.h, house.w, house.h);
-    this.houseW = house.w;
-    const boardSprite = Art.board(bw, bh, s);
-    bctx.drawImage(boardSprite, this.boardRect.x, this.boardRect.y, bw, bh);
-    this.bg = bg;
+    this.roadBottom = roadBottom;
+    this.roadHeight = roadHeight;
+    this.buildBg();
 
+    this.puffSprite = Art.pop('pop-heart', 22 * s);
+    this.arrivalT0 = -1;
     this.dashPeriod = 52 * s;
     this.dashes = Art.roadDashes(W + this.dashPeriod * 2, this.dashPeriod, s);
     this.dashY = roadBottom - 22 * s;
@@ -410,12 +409,14 @@ export class Game {
     // tiles and effects
     this.tileW = cell * 0.97;
     this.tileH = cell * 0.99;
-    this.tileSprite = Art.tile(this.tileW, this.tileH, 'normal');
+    this.tileLook = shop.tile;
+    this.tileSprite = Art.tile(this.tileW, this.tileH, 'normal', this.tileLook);
     this.tileLitSprite = Art.tile(this.tileW, this.tileH, 'lit');
     this.tileFlashSprite = Art.tileFlash(this.tileW, this.tileH);
     this.emojiSize = cell * 0.7;
     this.emojiSprites = KINDS.map(k => Art.emoji(k, this.emojiSize));
-    this.leafSprite = Art.leaf(cell * 0.42);
+    this.popKind = this.popNow();
+    this.leafSprite = Art.pop(this.popKind, cell * 0.42);
     this.sparkleSprite = Art.sparkle(cell * 0.4);
     this.glowSprite = Art.glow(cell * 1.2);
     this.ringSprite = Art.ring(cell * 1.1);
@@ -501,6 +502,68 @@ export class Game {
     }
   }
 
+  /**
+   * The still scenery, drawn once: grass, sky and road, the house in what it wears today, and the
+   * board's frame. Rebuilt on its own when the house changes (a new day, a purchase), never the board.
+   */
+  buildBg() {
+    const W = this.W, H = this.H, s = this.s, b = this.boardRect;
+    const [bg, bctx] = Art.surface(W, H);
+    bctx.fillStyle = Art.C.grass;
+    bctx.fillRect(0, 0, W, H);
+    Art.drawBackdrop(bctx, W, this.roadBottom, this.roadBottom - this.roadHeight, s);
+    this.decorKey = this.houseDecor().join(',');
+    const house = Art.house(70 * s, this.houseDecor());
+    this.houseX = W - 139 * s;
+    this.houseRect = { x: this.houseX - house.w / 2, y: this.roadBottom - this.roadHeight - 12 * s - house.h, w: house.w, h: house.h };
+    bctx.drawImage(house, this.houseRect.x, this.houseRect.y, house.w, house.h);
+    this.houseW = house.w;
+    bctx.drawImage(Art.board(b.w, b.h, s), b.x, b.y, b.w, b.h);
+    this.bg = bg;
+  }
+
+  /** What the house wears today: the festival's decoration, a candle on her birthday, and what she bought. */
+  houseDecor() {
+    const list = [], day = today();
+    const festive = decorOn(day);
+    if (festive) list.push(festive);
+    if (personalDate('birthday') === day) list.push('candle');
+    if (shop.decor !== 'nodecor') list.push(shop.decor);
+    return list;
+  }
+
+  /** The match pop in use: hers, or with the plain leaves, the season's (snow in December, red paper at the new year). */
+  popNow() {
+    if (shop.pop !== 'pop-leaf') return shop.pop;
+    const day = today();
+    if (day.slice(5, 7) === '12') return 'snow';
+    if (decorOn(day) === 'lanterns') return 'confetti';
+    return 'pop-leaf';
+  }
+
+  /**
+   * Catches the scene up with the shop and the calendar: the house, the pops and the tile look, each
+   * redrawn only when it changed (a purchase, or the date rolling over while the game was open).
+   */
+  dressScene() {
+    if (!this.built) return;
+    let changed = false;
+    if (this.houseDecor().join(',') !== this.decorKey) { this.buildBg(); changed = true; }
+    if (this.popNow() !== this.popKind) {
+      this.popKind = this.popNow();
+      this.leafSprite = Art.pop(this.popKind, this.cell * 0.42);
+      changed = true;
+    }
+    if (shop.tile !== this.tileLook) {
+      this.tileLook = shop.tile;
+      this.tileSprite = Art.tile(this.tileW, this.tileH, 'normal', this.tileLook);
+      this.fragSprites = new Map(); // pieces are cut from the tiles
+      this.tileSig = -1; // redraw the resting tiles
+      changed = true;
+    }
+    if (changed) this.promoteSprites();
+  }
+
   /** Safari draws ImageBitmaps faster than canvases; swap the per-frame sprites once they're ready. */
   promoteSprites() {
     if (typeof createImageBitmap !== 'function') return;
@@ -557,6 +620,7 @@ export class Game {
     const before = this.riderKey;
     this.shopDot = shop.giftWaiting || shop.hasNew;
     this.makeRider();
+    this.dressScene();
     if (this.riderKey !== before) this.hop(1.4);
     // coins going down (spent) show at once; coins coming in fly in once the panels are closed
     if (shop.coins < this.shownCoins) { this.shownCoins = shop.coins; this.updateCoins(); }
@@ -1092,6 +1156,13 @@ export class Game {
       this.dailyBtn.pressT0 = now();
       sound.play('tap');
       this.ui.openDaily();
+      return;
+    }
+    // the mailbox on the house has a letter in it
+    const hr = this.houseRect;
+    if (shop.decor === 'mailbox' && hr && pt.x > hr.x + hr.w * 0.75 && pt.x < hr.x + hr.w + 6 * this.s && pt.y > hr.y + hr.h * 0.35 && pt.y < hr.y + hr.h) {
+      sound.play('tap');
+      this.ui.showMailbox();
       return;
     }
     if (this.busy) return;
@@ -1863,6 +1934,8 @@ export class Game {
     this.anim.to(this.girl, { x: this.girlGoalX }, 0.8, {
       ease: 'inOut', key: 'ride', done: () => this.anim.to(this.girl, { alpha: 0 }, 0.25, { key: 'fade' }),
     });
+    // home: the door opens as she arrives, and two hearts puff up from the roof
+    this.after(0.75, () => { this.arrivalT0 = now(); this.arrivalFestive = !!decorOn(today()); });
     for (let i = 0; i < 5; i++) {
       this.after(i * 0.15, () => {
         const b = this.boardRect;
@@ -2212,6 +2285,56 @@ export class Game {
     }
   }
 
+  /**
+   * The arrival flourish over the house (see win()): the door swings open, two hearts puff up from
+   * the roof, and on a festival day sparkles too. With reduced motion, the same as one still moment.
+   */
+  drawArrival(t) {
+    const LIFE = 1.3;
+    let a = t - this.arrivalT0;
+    if (a > LIFE) { this.arrivalT0 = -1; return; }
+    if (REDUCED_MOTION) a = 0.55;
+    const ctx = this.ctx, r = this.houseRect, k = r.h / Art.HOUSE_DOOR.units, d = Art.HOUSE_DOOR;
+    const fade = Math.min(1, (LIFE - a) / 0.3);
+    // the doorway, dark and warm, with the door swung half open
+    const open = Math.min(1, a / 0.25);
+    const dx = r.x + d.x * k, dy = r.y + d.y * k, dw = d.w * k, dh = d.h * k;
+    ctx.globalAlpha = fade;
+    ctx.fillStyle = '#4A2A14';
+    ctx.fillRect(dx, dy, dw, dh);
+    ctx.fillStyle = 'rgba(255,214,120,0.55)';
+    ctx.fillRect(dx + dw * 0.15, dy + dh * 0.2, dw * 0.7, dh * 0.8);
+    ctx.fillStyle = '#9A5A2E';
+    ctx.strokeStyle = Art.C.outline;
+    ctx.lineWidth = Math.max(1, 1.6 * k);
+    ctx.beginPath();
+    ctx.rect(dx, dy, dw * (1 - 0.75 * open), dh);
+    ctx.fill();
+    ctx.stroke();
+    // hearts from the roof (a sparkle or two besides on a festival day)
+    const img = this.puffSprite, festive = this.arrivalFestive;
+    for (let i = 0; i < 2; i++) {
+      const u = Math.max(0, Math.min(1, (a - 0.15 - i * 0.18) / 0.9));
+      if (u <= 0) continue;
+      const x = r.x + d.roofX * k + (i ? 9 : -7) * this.s * u + Math.sin(u * 7 + i) * 3 * this.s;
+      const y = r.y + d.roofY * k - 34 * this.s * u;
+      ctx.globalAlpha = fade * Math.min(1, 4 * u) * (1 - u * u);
+      const sc = 0.6 + 0.5 * u;
+      ctx.drawImage(img, x - (img.w * sc) / 2, y - (img.h * sc) / 2, img.w * sc, img.h * sc);
+    }
+    if (festive && this.sparkleSprite) {
+      for (let i = 0; i < 3; i++) {
+        const u = Math.max(0, Math.min(1, (a - 0.3 - i * 0.12) / 0.6));
+        if (u <= 0 || u >= 1) continue;
+        const sp = this.sparkleSprite, sc = Math.sin(u * Math.PI);
+        const x = r.x + r.w * (0.25 + 0.25 * i), y = r.y + r.h * 0.05 - 20 * this.s * u;
+        ctx.globalAlpha = fade * sc;
+        ctx.drawImage(sp, x - (sp.w * sc) / 2, y - (sp.h * sc) / 2, sp.w * sc, sp.h * sc);
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
   render(t) {
     const ctx = this.ctx, s = this.s;
     this.moveStage(t);
@@ -2223,6 +2346,8 @@ export class Game {
     const off = ((t * this.dashPeriod) / 0.45) % this.dashPeriod;
     ctx.drawImage(this.dashes, -off, this.dashY - this.dashes.h / 2, this.dashes.w, this.dashes.h);
     if (this.backdrop) this.drawBackdrop(off);
+
+    if (this.arrivalT0 >= 0) this.drawArrival(t);
 
     // the rider, bobbing on the scooter (and hopping when she's pleased), trail first so it's behind
     let bob = -1.6 * s * 0.5 * (1 - Math.cos((TAU * t) / 0.44));

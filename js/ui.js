@@ -12,7 +12,8 @@ import { pieceScene, framedBoard, FRAME, LIP } from './puzzlefx.js';
 import { store } from './store.js';
 import { Daily } from './store.js';
 import { todayKey, dailyRules } from './levels.js';
-import { shop, RIDER_ITEMS, HAT_ITEMS, TRAIL_ITEMS, TRY_ON, COINS_PER_LEVEL } from './shop.js';
+import { shop, ITEMS, RIDER_ITEMS, TRY_ON, COINS_PER_LEVEL } from './shop.js';
+import { house as houseArt, pop as popArt, tile as tileArt, emoji as emojiArt } from './art.js';
 import { wearHat, snapshot } from './hats.js';
 import { noteText, noteNow, notesLoaded } from './notes.js';
 import { riderFrame, riderFrames, frameAt, Trail, trailSprites } from './riders.js';
@@ -21,7 +22,7 @@ import { renderSVG } from './svgrider.js';
 import { poseAt } from './animals.js';
 import { iconEl, rich, splitIcon, uiScale } from './icons.js';
 
-const SHOP_ITEMS = { rider: RIDER_ITEMS, hat: HAT_ITEMS, trail: TRAIL_ITEMS };
+const SHOP_ITEMS = ITEMS;
 const KINDS = Object.keys(SHOP_ITEMS);
 
 /** A small pink "new" dot, with the word for VoiceOver. */
@@ -50,6 +51,8 @@ function bigIcon(...names) {
   el.append(...names.map((n, i) => iconEl(n, i ? 'ic extra' : 'ic')));
   return el;
 }
+
+const REDUCED_UI = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /** A phone on its side: style.css covers the game and asks her to turn it back, so it waits. */
 const sideways = matchMedia('(orientation: landscape) and (max-height: 500px) and (pointer: coarse)');
@@ -856,12 +859,15 @@ export class UI {
   shopPage(page, select) {
     let kind = select?.kind ?? this.shopKind ?? 'rider';
     let sel = select?.id ?? shop.current(kind);
-    const seg = segmented([['rider', L.riders()], ['hat', L.hats()], ['trail', L.trails()]], kind, k => {
+    const seg = segmented(KINDS.map(k => [k, L.kindName(k)]), kind, k => {
       kind = this.shopKind = k;
       sel = shop.current(k);
       paint();
+      seg.querySelector('button.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
     });
-    seg.classList.add('wide');
+    // three kinds fit side by side; more scroll sideways as a rail of chips
+    seg.classList.add(KINDS.length > 3 ? 'rail' : 'wide');
+    requestAnimationFrame(() => seg.querySelector('button.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
     // what's new this visit: marked as it's looked at, so the dots and ribbons last for this visit
     const fresh = {};
     const look = k => {
@@ -898,7 +904,9 @@ export class UI {
       const item = items.find(i => i.id === sel) ?? items[0];
       if (kind === 'rider') preview.show(item.id, shop.trail, shop.hatOn(item.id));
       else if (kind === 'hat') preview.show(shop.model.id, shop.trail, item.id);
-      else preview.show(shop.rider, item.id, shop.hat);
+      else preview.show(shop.rider, kind === 'trail' ? item.id : shop.trail, shop.hat);
+      // the house, the pops or the tiles join the scene on their own tabs
+      preview.extra(kind, item.id);
       stage.classList.toggle('legendary', !!item.legendary);
       name.textContent = L.itemName(kind, item.id);
       setText(text, L.itemText(kind, item.id));
@@ -932,6 +940,7 @@ export class UI {
         preview.hop(0.7);
         // trying on a hat: it drops onto the head
         if (kind === 'hat') preview.dropHat();
+        if (kind === 'pop') preview.popNow();
       };
       // for sale in price order, then the gifts in their own row; nothing moves after a purchase
       const cards = [];
@@ -1042,6 +1051,25 @@ export class UI {
       this.lazyThumb(c, () => snapshot(hat ? model : id, hat ? id : shop.hatOn(id), w, hat));
     } else if (kind === 'rider') {
       c = riderFrame(id, 64 * u);
+    } else if (kind === 'decor') {
+      c = houseArt(46 * u, id === 'nodecor' ? [] : [id]);
+    } else if (kind === 'tile') {
+      const [cv, ctx] = surfaceFor(64 * u, 64 * u);
+      const t = tileArt(44 * u, 45 * u, 'normal', id), e = emojiArt('🍓', 30 * u);
+      ctx.drawImage(t, 10 * u, 9 * u, t.w, t.h);
+      ctx.drawImage(e, 32 * u - e.w / 2, 30 * u - e.h / 2, e.w, e.h);
+      c = cv;
+    } else if (kind === 'pop') {
+      const [cv, ctx] = surfaceFor(64 * u, 64 * u);
+      const p = popArt(id, 26 * u);
+      for (const [x, y, rot] of [[22, 26, -0.5], [44, 22, 0.4], [34, 44, 0.1]]) {
+        ctx.save();
+        ctx.translate(x * u, y * u);
+        ctx.rotate(rot);
+        ctx.drawImage(p, -p.w / 2, -p.h / 2, p.w, p.h);
+        ctx.restore();
+      }
+      c = cv;
     } else {
       const sprites = trailSprites(id, 1.05 * u);
       const [cv, ctx] = surfaceFor(64 * u, 64 * u);
@@ -1175,6 +1203,7 @@ export class UI {
         trail.update(t, x - RIDER * 0.3, bottom - RIDER * 0.3 + bob, speed);
         trail.draw(ctx, t, dpr);
       }
+      drawExtra(t);
       if (actor) {
         actor.pose(t, x, bottom);
       } else {
@@ -1197,7 +1226,43 @@ export class UI {
         ctx.globalAlpha = 1;
       }
     };
+    let extra = null; // { kind, id, sprites }: the house, pops or tiles on their tabs
+    let nextPop = 0;
+    const burstPops = t => {
+      for (let i = 0; i < 10; i++) {
+        const a = -Math.PI / 2 + (Math.random() - 0.5) * 2.6, v = (90 + Math.random() * 110) * u;
+        bits.push({ t0: t, life: 0.9 + Math.random() * 0.3, x: W / 2, y: H - 70 * u, vx: Math.cos(a) * v, vy: Math.sin(a) * v,
+          rot: Math.random() * 6, vr: (Math.random() - 0.5) * 9, sprite: extra.sprites.pop });
+      }
+    };
+    const drawExtra = t => {
+      if (!extra) return;
+      const sp = extra.sprites;
+      if (sp.house) ctx.drawImage(sp.house, W - sp.house.w - 10 * u, H - ROAD - sp.house.h + 4 * u, sp.house.w, sp.house.h);
+      if (sp.tiles) sp.tiles.forEach((im, i) => ctx.drawImage(im, 14 * u + i * 46 * u, 14 * u, im.w, im.h));
+      if (sp.pop && t >= nextPop && !REDUCED_UI) { nextPop = t + 1.6; burstPops(t); }
+    };
     const api = {
+      /** What joins the scene on the decor, pop and tile tabs (nothing on the others). */
+      extra(kind, id) {
+        if (extra && extra.kind === kind && extra.id === id) return;
+        if (!['decor', 'pop', 'tile'].includes(kind)) { extra = null; return; }
+        const sprites = {};
+        if (kind === 'decor') sprites.house = houseArt(64 * u, id === 'nodecor' ? [] : [id]);
+        if (kind === 'pop') sprites.pop = popArt(id, 22 * u);
+        if (kind === 'tile') {
+          sprites.tiles = ['🍓', '🐰', '🍩'].map(ch => {
+            const [cv, c2] = surfaceFor(42 * u, 43 * u);
+            const tl = tileArt(42 * u, 43 * u, 'normal', id), e = emojiArt(ch, 29 * u);
+            c2.drawImage(tl, 0, 0, tl.w, tl.h);
+            c2.drawImage(e, 21 * u - e.w / 2, 19.5 * u - e.h / 2, e.w, e.h);
+            return cv;
+          });
+        }
+        extra = { kind, id, sprites };
+        nextPop = 0;
+      },
+      popNow() { if (extra?.sprites.pop) nextPop = 0; },
       show(rider, trailName, hat = 'nohat') {
         if (rider !== riderId) {
           riderId = rider;
@@ -1383,6 +1448,22 @@ export class UI {
       report.ping(`She opened a gift and sent a heart back: ${what} 💗`).catch(() => {});
     }, { once: true });
     return b;
+  }
+
+  /** The letter in the mailbox on the house: his 'mailbox' note, or a few words of his anyway. */
+  showMailbox() {
+    if (this.anyOpen) return;
+    const layer = this.layers.gift;
+    layer.replaceChildren();
+    const [scrim, panel] = this.panel(L.mailboxTitle());
+    panel.classList.add('gift-panel');
+    const close = () => this.hide('gift');
+    scrim.addEventListener('click', close);
+    const note = h('p', 'gift-note', noteNow('mailbox') ?? L.mailboxNote());
+    panel.append(bigIcon('envelope'), note, button(L.thankYou(), close));
+    layer.append(scrim, panel);
+    this.show('gift');
+    report.note('mailbox');
   }
 
   /** A day that brings only a note from him (Valentine's, 520, 七夕, the anniversary). */
