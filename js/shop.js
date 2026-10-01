@@ -38,8 +38,8 @@
 // Otherwise new prices keep away from the digit 4.
 
 import { store } from './store.js';
-import { today, festivalFor } from './dates.js';
-import { personalDate } from './notes.js';
+import { today, festivalFor, FESTIVALS } from './dates.js';
+import { personalDate, noteNow } from './notes.js';
 
 export const RIDER_ITEMS = [
   { id: 'girl', price: 0 },
@@ -274,8 +274,22 @@ export const shop = {
     return 'coins';
   },
 
+  /**
+   * Days that bring only a note from him (Valentine's, 520, 七夕, the anniversary) that have come,
+   * have a note written for them, and haven't been read: their ids, oldest first.
+   */
+  pendingNotes() {
+    const done = this.claimed(), now = today();
+    const days = [...FESTIVALS.filter(f => f.note).map(f => [f.id, f.d]), ['anniversary', personalDate('anniversary')]];
+    return days.filter(([id, d]) => d && now >= d && !done.includes(`note:${id}`) && noteNow(id)).map(([id]) => id);
+  },
+  /** A note has been read. */
+  readNote(id) {
+    if (!this.claimed().includes(`note:${id}`)) store.set('shop.claimed', [...this.claimed(), `note:${id}`]);
+  },
+
   /** Something waits to be opened: the shop button wears a dot. */
-  get giftWaiting() { return this.pendingGifts().length > 0 || this.queue().length > 0; },
+  get giftWaiting() { return this.pendingGifts().length > 0 || this.queue().length > 0 || this.pendingNotes().length > 0; },
 
   // ------------------------------------------------ what's new
 

@@ -66,8 +66,8 @@ self.addEventListener('fetch', e => {
   // the version check must always ask the server
   if (url.pathname.endsWith('/version.json')) return;
 
-  // the photo list should be fresh so newly added photos show up, but never wait long for it
-  if (url.pathname.endsWith('/photos/index.json')) {
+  // the photo list (and his notes) should be fresh so new ones show up, but never wait long for them
+  if (url.pathname.endsWith('/photos/index.json') || url.pathname.endsWith('/notes/notes.bin')) {
     const network = fetch(req).then(res => {
       if (res.ok) {
         const copy = res.clone();

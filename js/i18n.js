@@ -311,6 +311,12 @@ export const L = {
   earnShort: k => ({
     streak: t('{flame} 7 days', '{flame} 7 天'), level100: t('{trophy} Lv 100', '{trophy} 100 层'), album: t('{puzzle} Album', '{puzzle} 相册'),
   })[k] ?? '',
+  noteTitle: id => ({
+    valentine: t('Happy Valentine\'s Day {heart}', '情人节快乐 {heart}'),
+    520: t('5.20 {heart}', '520 快乐 {heart}'),
+    qixi: t('Happy Qixi {heart}', '七夕快乐 {heart}'),
+    anniversary: t('Happy anniversary {hearts}', '纪念日快乐 {hearts}'),
+  })[id] ?? t('A note for you {envelope}', '给你的小纸条 {envelope}'),
   heartBack: () => t('Send a heart back {heart}', '回他一颗心 {heart}'),
   heartSent: () => t('Heart sent {hearts}', '心意已送达 {hearts}'),
   thankYou: () => t('Thank you {heart}', '谢谢 {heart}'),

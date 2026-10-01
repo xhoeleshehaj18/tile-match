@@ -14,7 +14,7 @@ import { Daily } from './store.js';
 import { todayKey, dailyRules } from './levels.js';
 import { shop, RIDER_ITEMS, HAT_ITEMS, TRAIL_ITEMS, TRY_ON, COINS_PER_LEVEL } from './shop.js';
 import { wearHat, snapshot } from './hats.js';
-import { noteText } from './notes.js';
+import { noteText, noteNow, notesLoaded } from './notes.js';
 import { riderFrame, riderFrames, frameAt, Trail, trailSprites } from './riders.js';
 import { ShopRider, isAnimal } from './shoprider.js';
 import { renderSVG } from './svgrider.js';
@@ -309,6 +309,11 @@ export class UI {
     // spending is animated by the purchase itself.
     shop.onChange(() => {
       if (this.menu && shop.coins > this.menu.coins.value) countTo(this.menu.coins, shop.coins, 0.5);
+    });
+    // her dates and his notes arrive a moment after opening: a birthday gift or a note may now be due
+    notesLoaded.then(() => {
+      this.game?.refreshShop();
+      if (this.giftsStarted && shop.giftWaiting) this.maybeShowShopGift();
     });
   }
 
@@ -1243,9 +1248,11 @@ export class UI {
    * one at a time. Waits for the welcome, the opening deal and any panel to be out of the way.
    */
   maybeShowShopGift() {
+    this.giftsStarted = true; // from the first call, a few moments after the game appears
     const hat = shop.pendingGifts()[0];
     const queued = shop.queue()[0];
-    if (!shop.giftPending && !hat && !queued) return;
+    const note = shop.pendingNotes()[0];
+    if (!shop.giftPending && !hat && !queued && !note) return;
     if (this.anyOpen || this.breakKind || this.welcomeWaiting || this.game.drag || this.game.finishing) {
       clearTimeout(this.giftTimer);
       this.giftTimer = setTimeout(() => this.maybeShowShopGift(), 2500);
@@ -1253,7 +1260,8 @@ export class UI {
     }
     if (shop.giftPending) this.showStarterGift();
     else if (hat) this.showHatGift(hat);
-    else this.showQueuedGift(shop.unqueue());
+    else if (queued) this.showQueuedGift(shop.unqueue());
+    else this.showNote(note);
   }
 
   /** Closes a gift panel, and lets the next gift (if any) come along after it. */
@@ -1300,7 +1308,7 @@ export class UI {
    * A gift hat: it's hers as soon as the panel opens (and on her animal), shown on every animal she
    * owns at once; with none yet, on the try-on bunny, waiting for her.
    */
-  showHatGift(item, reason = item.gift, noteId = null) {
+  showHatGift(item, reason = item.gift, noteId = reason) {
     if (item.gift) shop.claim(item);
     const layer = this.layers.gift;
     layer.replaceChildren();
@@ -1340,7 +1348,7 @@ export class UI {
     if (!entry) return;
     if (entry.kind === 'hat') {
       const item = shop.item('hat', entry.id);
-      if (item) { this.showHatGift(item, entry.reason, entry.noteId); return; }
+      if (item) { this.showHatGift(item, entry.reason, entry.noteId ?? entry.reason); return; }
     }
     if (entry.kind !== 'coins') { this.closeGift(); return; }
     const layer = this.layers.gift;
@@ -1375,6 +1383,25 @@ export class UI {
       report.ping(`She opened a gift and sent a heart back: ${what} 💗`).catch(() => {});
     }, { once: true });
     return b;
+  }
+
+  /** A day that brings only a note from him (Valentine's, 520, 七夕, the anniversary). */
+  showNote(id) {
+    const text = noteNow(id);
+    shop.readNote(id);
+    if (!text) { this.closeGift(); return; }
+    const layer = this.layers.gift;
+    layer.replaceChildren();
+    const [scrim, panel] = this.panel(L.noteTitle(id));
+    panel.classList.add('gift-panel');
+    const close = () => this.closeGift();
+    scrim.addEventListener('click', close);
+    const note = h('p', 'gift-note', text);
+    panel.append(bigIcon('envelope'), note, button(L.thankYou(), close), this.heartBack(`the ${id} note`));
+    layer.append(scrim, panel);
+    this.show('gift');
+    sound.play('tap');
+    report.note('note', id);
   }
 
   /** His note for a gift, in her language, when there is one and it can be read. */
