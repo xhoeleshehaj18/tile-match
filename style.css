@@ -187,6 +187,7 @@ html.standalone .overlay { bottom: auto; height: 100lvh; }
 .menu-body {
   flex: 1;
   min-height: 0;
+  overflow-x: hidden; /* pages only ever scroll down (the shop's tab rail scrolls sideways on its own) */
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
@@ -443,10 +444,10 @@ html.standalone .overlay { bottom: auto; height: 100lvh; }
 .new-ribbon { position: absolute; top: 0.3125rem; left: 0.3125rem; padding: 0.0625rem 0.375rem; border-radius: 99px; background: var(--pink);
   color: #fff; font-size: 0.625rem; font-weight: 900; letter-spacing: 0.06em; text-transform: uppercase; box-shadow: 0 0 0 0.125rem #fff; }
 /* "new" dots on the tabs, with words for VoiceOver */
-.new-dot { display: inline-block; width: 0.5rem; height: 0.5rem; margin-left: 0.3125rem; border-radius: 50%; background: var(--pink); box-shadow: 0 0 0 0.125rem #fff; vertical-align: 0.15em; }
+.new-dot { position: relative; display: inline-block; width: 0.5rem; height: 0.5rem; margin-left: 0.3125rem; border-radius: 50%; background: var(--pink); box-shadow: 0 0 0 0.125rem #fff; vertical-align: 0.15em; }
 .tab .new-dot { position: absolute; top: 0.25rem; right: 22%; margin: 0; }
 .tab { position: relative; }
-.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.sr-only { position: absolute; top: 0; left: 0; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .grid-head { grid-column: 1 / -1; margin: 0.5rem 0.25rem 0; font-size: 1rem; font-weight: 900; color: var(--title); }
 /* gifts: a date until they arrive, then ready to open */
 .item-card.gift { border-style: dashed; }

@@ -3,8 +3,8 @@
 // version is used from the next launch). Encrypted photos never change once written, so they're
 // cached as-is.
 
-const CACHE = 'tile-match-v31';
-const BUILD = 31;
+const CACHE = 'tile-match-v32';
+const BUILD = 32;
 const PHOTOS = 'tile-match-photos'; // kept across app updates so photos never download twice
 // The painted rider sheets are kept across updates too. Their names change with their pictures
 // (tools/riders.mjs writes this list), so a changed sheet is a new file and the old one is let go.
