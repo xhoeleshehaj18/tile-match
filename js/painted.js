@@ -11,7 +11,9 @@ import { frameAt } from './riders.js';
  *  for boiling lines and ears, none below, so the wheels still sit on the bottom edge), its pixels
  *  per unit in the sheet, and how the frames are laid out. */
 export const SHEET = { x0: -8, y0: -10, w: 116, h: 150, px: 3, cols: 6, boils: 3, quality: 0.86 };
-export const PAINTED = ['bunny', 'capy', 'kitty', 'penguin', 'panda', 'unicorn'];
+/** Each painted sheet's file in riders/, named by its content (written by tools/riders.mjs). */
+export const SHEETS = { bunny: 'bunny.c9491fa8.webp', capy: 'capy.d5c6c0d8.webp', kitty: 'kitty.595d7031.webp', panda: 'panda.46010c28.webp', penguin: 'penguin.85409fe2.webp', unicorn: 'unicorn.dc846968.webp' };
+export const PAINTED = Object.keys(SHEETS);
 const BOIL_FPS = 8;
 
 const sheets = new Map();
@@ -20,8 +22,8 @@ function loadSheet(id) {
     sheets.set(id, new Promise((resolve, reject) => {
       const img = new Image();
       img.onload = () => resolve(img);
-      img.onerror = () => { sheets.delete(id); reject(new Error(`riders/${id}.webp`)); };
-      img.src = `riders/${id}.webp`;
+      img.onerror = () => { sheets.delete(id); reject(new Error(`riders/${SHEETS[id]}`)); };
+      img.src = `riders/${SHEETS[id]}`;
     }));
   }
   return sheets.get(id);
