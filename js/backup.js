@@ -33,6 +33,8 @@ const KEYS = [
   ...['', 'levels.', 'big.', 'daily.'].map(p => p + 'fevers'), 'paidScore',
   // v24: gravity is the only twist left, and its card shows once
   'levels.gravitySeen', 'big.gravitySeen',
+  // v30: hats, which each animal wears, the gifts opened, and the last animal she rode
+  'shop.hats', 'shop.claimed', 'shop.lastAnimal',
 ];
 const isBoard = k => k === 'board' || k.endsWith('.board');
 
