@@ -431,6 +431,16 @@ html.standalone .overlay { bottom: auto; height: 100lvh; }
 @media (prefers-reduced-motion: reduce) {
   .gift-rider, .item-card.sel .thumb-art, .menu-page { animation: none; }
 }
+/* his note for a gift: handwritten-feeling, in her language */
+.gift-note { margin: -0.25rem 0.5rem 0; padding: 0.625rem 0.875rem; border-radius: 0.875rem; background: #FFF4E4; border: 2px dashed #F4A6C4;
+  font-size: 0.9375rem; font-weight: 700; line-height: 1.45; color: var(--title); white-space: pre-line; text-wrap: pretty; }
+.gift-note[hidden] { display: none; }
+/* "send a heart back": she taps it herself, once */
+.heart-back { align-self: center; padding: 0.375rem 0.875rem; border: 2px solid #F4A6C4; border-radius: 999px; background: #FFF6FA;
+  font: 800 0.875rem var(--font); color: var(--pink-shade); cursor: pointer; transition: transform 0.1s, opacity 0.2s; }
+.heart-back:active { transform: scale(0.94); }
+.heart-back:disabled { opacity: 0.7; border-style: dashed; }
+.heart-back .ic { width: 1.1em; height: 1.1em; vertical-align: -0.18em; }
 .gift-line { display: flex; align-items: center; justify-content: center; gap: 0.5rem; flex-wrap: wrap; font-size: 1rem; font-weight: 800; }
 
 .hint { margin: -0.25rem 0.25rem 0.125rem; font-size: 0.875rem; font-weight: 700; opacity: 0.55; line-height: 1.35; }

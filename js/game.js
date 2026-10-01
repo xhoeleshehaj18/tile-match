@@ -213,6 +213,7 @@ export class Game {
     this.built = false;
     shop.onChange(() => this.refreshShop());
     this.loadState();
+    photos.loaded.then(() => this.checkAchievements()).catch(() => {});
 
     this.bindInput();
     this.last = now();
@@ -1885,6 +1886,7 @@ export class Game {
     const result = this.makeResult(true, newBest);
     result.coins = this.payChallenge(true);
     result.puzzle = puzzle.award(2);
+    this.checkAchievements();
     this.after(1.7, () => this.ui.showResult(result), 'win');
   }
 
@@ -1920,11 +1922,28 @@ export class Game {
     this.updateBadges();
     if (daily) this.dailyDot = false;
     report.note('WON', `${this.mode} ${daily ? this.dailyDate : 'level ' + cleared} ${stars}* combo${this.bestCombo}/${r.comboGoal} +${coins.total}c`);
+    const pieces = puzzle.award(prize.pieces);
+    // gifts for the milestones: they wait for the result panel to close
+    const mystery = daily ? null : shop.mystery(cleared, this.mode);
+    if (mystery) report.note('mystery', `${this.mode} ${cleared}: ${mystery}`);
+    this.checkAchievements();
     return {
       won: true, level: cleared, daily, date: this.dailyDate, theme: r.theme, stars, comboOk,
-      bestCombo: this.bestCombo, comboGoal: r.comboGoal,
-      prize, coins, puzzle: puzzle.award(prize.pieces), streak: daily ? Daily.streak : 0, best: daily ? Daily.best(this.dailyDate) : 0,
+      bestCombo: this.bestCombo, comboGoal: r.comboGoal, mystery,
+      prize, coins, puzzle: pieces, streak: daily ? Daily.streak : 0, best: daily ? Daily.best(this.dailyDate) : 0,
     };
+  }
+
+  /**
+   * The hats she earns by playing: a 7-day daily streak, level 100 (in Levels or on the Big board),
+   * the whole photo album. Checked after every win, and once the photo list has loaded on opening
+   * (which also gives them for what she did before they existed). An empty photo list never counts.
+   */
+  checkAchievements() {
+    const cleared = Math.max(store.int('levels.level', 1), store.int('big.level', 1)) - 1;
+    const album = photos.entries.length > 0 && puzzle.album.length >= photos.entries.length;
+    shop.achievements({ streak: store.int('daily.streak'), cleared, album });
+    if (shop.queue().length) this.ui.maybeShowShopGift();
   }
 
   lose() {

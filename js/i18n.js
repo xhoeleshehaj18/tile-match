@@ -310,6 +310,8 @@ export const L = {
   earnShort: k => ({
     streak: t('{flame} 7 days', '{flame} 7 天'), level100: t('{trophy} Lv 100', '{trophy} 100 层'), album: t('{puzzle} Album', '{puzzle} 相册'),
   })[k] ?? '',
+  heartBack: () => t('Send a heart back {heart}', '回他一颗心 {heart}'),
+  heartSent: () => t('Heart sent {hearts}', '心意已送达 {hearts}'),
   thankYou: () => t('Thank you {heart}', '谢谢 {heart}'),
   giftWaits: () => t('It\'s waiting for an animal rider to wear it.', '它在等一只小动物骑手来戴呢。'),
   putItOn: () => t('Put it on {heart}', '戴上看看 {heart}'),

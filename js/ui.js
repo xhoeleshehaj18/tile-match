@@ -782,6 +782,7 @@ export class UI {
       const p = puzzle.award(PIECES);
       await pieceScene.play(p, { origin: from });
       this.welcomeWaiting = false;
+      this.game.checkAchievements();
     });
     panel.append(open);
     layer.append(scrim, panel);
@@ -1280,7 +1281,7 @@ export class UI {
       this.closeGift();
       this.openMenu('shop', { kind: 'hat', id: item.id });
     }));
-    panel.append(quietButton(L.later(), close));
+    panel.append(this.heartBack(`${L.itemName('hat', item.id)} (${reason})`), quietButton(L.later(), close));
     layer.append(scrim, panel);
     this.show('gift');
     sound.play('tap');
@@ -1307,11 +1308,26 @@ export class UI {
     const chip = coinChip(0, 'big');
     countTo(chip, entry.n, 0.9, 0.5);
     line.append(chip);
-    panel.append(line, button(L.thankYou(), close));
+    panel.append(line, button(L.thankYou(), close), this.heartBack(`${entry.n} coins (${entry.reason})`));
     layer.append(scrim, panel);
     this.show('gift');
     sound.play('tap');
     report.note('coinGift', `${entry.n} (${entry.reason})`);
+  }
+
+  /**
+   * "Send a heart back": a small button she taps herself, which tells him she opened the gift.
+   * Nothing is sent unless she taps, and only once per gift.
+   */
+  heartBack(what) {
+    const b = h('button', 'quiet heart-back', L.heartBack());
+    b.addEventListener('click', () => {
+      sound.play('tap');
+      b.disabled = true;
+      setText(b, L.heartSent());
+      report.ping(`She opened a gift and sent a heart back: ${what} 💗`).catch(() => {});
+    }, { once: true });
+    return b;
   }
 
   /** His note for a gift, in her language, when there is one and it can be read. */

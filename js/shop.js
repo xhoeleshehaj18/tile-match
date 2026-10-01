@@ -248,6 +248,32 @@ export const shop = {
     if (first?.kind === 'hat') this.equip('hat', first.id);
     return first;
   },
+  /**
+   * Hats earned by playing, given the moment she qualifies (and on opening the game, for what she
+   * did before they existed): a 7-day daily streak, level 100 cleared, the whole photo album.
+   * Never taken back.
+   */
+  achievements({ streak = 0, cleared = 0, album = false }) {
+    if (streak >= 7) this.grant('hat', 'nightcap', 'streak');
+    if (cleared >= 100) this.grant('hat', 'gradcap', 'level100');
+    if (album) this.grant('hat', 'halo', 'album');
+  },
+  /**
+   * The mystery gift on every 25th level (level 100 brings the graduation cap instead): the cheapest
+   * common hat she doesn't have yet, never a love-number hat, the tiger or the crown; once she has
+   * them all, coins. Never random, and given once per level. Returns what it gave, or null.
+   */
+  mystery(level, mode) {
+    if (level % 25 || level === 100) return null;
+    const key = `${mode}:${level}`, given = store.json('shop.mystery') ?? [];
+    if (given.includes(key)) return null;
+    store.set('shop.mystery', [...given, key].slice(-24));
+    const id = MYSTERY_HATS.find(h => !this.owns('hat', h));
+    if (id) { this.grant('hat', id, 'mystery', `level${level}`); return id; }
+    this.gift(MYSTERY_COINS, 'mystery', `level${level}`);
+    return 'coins';
+  },
+
   /** Something waits to be opened: the shop button wears a dot. */
   get giftWaiting() { return this.pendingGifts().length > 0 || this.queue().length > 0; },
 

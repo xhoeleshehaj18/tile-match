@@ -220,7 +220,7 @@ export function compose(text, tags, d) {
 
 // ---------------------------------------------------------------- sending
 
-async function post(id, body) {
+async function post(id, body, subject = `🐞 Tile Match #${id}`) {
   if (!ACCESS_KEY) throw new Error('no relay configured');
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), 9000);
@@ -230,7 +230,7 @@ async function post(id, body) {
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({
         access_key: ACCESS_KEY,
-        subject: `🐞 Tile Match #${id}`,
+        subject,
         from_name: 'Tile Match',
         message: body,
       }),
@@ -252,10 +252,10 @@ const writeQueue = q => {
   try { localStorage.setItem('reports', JSON.stringify(q.slice(-MAX_QUEUE))); } catch {}
 };
 
-function enqueue(id, body) {
+function enqueue(id, body, subject) {
   const q = readQueue();
   if (q.some(r => r.id === id)) return;
-  q.push({ id, body, at: Date.now(), tries: 0 });
+  q.push({ id, body, subject, at: Date.now(), tries: 0 });
   writeQueue(q);
 }
 
@@ -266,7 +266,7 @@ export async function flush() {
   if (!q.length) return;
   for (const r of q.slice()) {
     try {
-      await post(r.id, r.body);
+      await post(r.id, r.body, r.subject);
       rememberSent(r.id, '(queued) ' + r.body.split('\n')[2].slice(0, 28));
       q = readQueue().filter(x => x.id !== r.id);
       writeQueue(q);
@@ -325,4 +325,21 @@ export async function send(text, tags, d) {
 export function lastBody() {
   const q = readQueue();
   return q.length ? q[q.length - 1].body : '';
+}
+
+/**
+ * A one-line message to him that she chose to send (a heart back for a gift). Not a bug report:
+ * no diagnostics, nothing copied to her clipboard, and it doesn't count toward the report limit.
+ * Kept on the phone and retried when it can't get through.
+ */
+export async function ping(text) {
+  const id = Math.random().toString(36).slice(2, 6);
+  const body = `${clean(text)}\n\nv${VERSION} · ${new Date().toISOString().slice(0, 16).replace('T', ' ')}Z`;
+  try {
+    await post(id, body, '💗 Tile Match');
+    return 'sent';
+  } catch {
+    enqueue(id, body, '💗 Tile Match');
+    return 'queued';
+  }
 }
