@@ -3,9 +3,13 @@
 // version is used from the next launch). Encrypted photos never change once written, so they're
 // cached as-is.
 
-const CACHE = 'tile-match-v30';
-const BUILD = 30;
+const CACHE = 'tile-match-v31';
+const BUILD = 31;
 const PHOTOS = 'tile-match-photos'; // kept across app updates so photos never download twice
+// The painted rider sheets are kept across updates too. Their names change with their pictures
+// (tools/riders.mjs writes this list), so a changed sheet is a new file and the old one is let go.
+const RIDERS = 'tile-match-riders';
+const RIDER_FILES = ['riders/bunny.c9491fa8.webp', 'riders/capy.d5c6c0d8.webp', 'riders/kitty.595d7031.webp', 'riders/panda.46010c28.webp', 'riders/penguin.85409fe2.webp', 'riders/unicorn.dc846968.webp'];
 const APP = [
   './', 'index.html', 'style.css', 'manifest.webmanifest',
   'js/main.js', 'js/game.js', 'js/board.js', 'js/art.js', 'js/ui.js',
@@ -13,7 +17,7 @@ const APP = [
   'js/report.js', 'js/backup.js', 'js/splash.js', 'js/levels.js', 'js/puzzle.js', 'js/puzzlefx.js',
   'js/shop.js', 'js/riders.js', 'js/icons.js', 'js/hud.js',
   'js/animals.js', 'js/svgrider.js', 'js/shoprider.js', 'js/painted.js', 'js/lib/gsap.min.js',
-  'js/hats.js', 'js/dates.js',
+  'js/hats.js', 'js/dates.js', 'js/notes.js',
   'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
 ];
 
@@ -45,7 +49,11 @@ self.addEventListener('message', e => {
 self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys()
-      .then(keys => Promise.all(keys.filter(k => k !== CACHE && k !== PHOTOS).map(k => caches.delete(k))))
+      .then(keys => Promise.all(keys.filter(k => k !== CACHE && k !== PHOTOS && k !== RIDERS).map(k => caches.delete(k))))
+      .then(() => caches.open(RIDERS))
+      .then(cache => cache.keys().then(reqs => Promise.all(reqs
+        .filter(r => !RIDER_FILES.some(f => new URL(r.url).pathname.endsWith('/' + f)))
+        .map(r => cache.delete(r)))))
       .then(() => self.clients.claim()),
   );
 });
@@ -58,8 +66,8 @@ self.addEventListener('fetch', e => {
   // the version check must always ask the server
   if (url.pathname.endsWith('/version.json')) return;
 
-  // the photo list should be fresh so newly added photos show up, but never wait long for it
-  if (url.pathname.endsWith('/photos/index.json')) {
+  // the photo list (and his notes) should be fresh so new ones show up, but never wait long for them
+  if (url.pathname.endsWith('/photos/index.json') || url.pathname.endsWith('/notes/notes.bin')) {
     const network = fetch(req).then(res => {
       if (res.ok) {
         const copy = res.clone();
@@ -78,6 +86,20 @@ self.addEventListener('fetch', e => {
     e.respondWith(
       caches.open(PHOTOS).then(async cache => {
         const cached = await cache.match(req);
+        if (cached) return cached;
+        const res = await fetch(req);
+        if (res.ok) cache.put(req, res.clone());
+        return res;
+      }),
+    );
+    return;
+  }
+
+  // painted rider sheets never change under their name: download once, keep across updates
+  if (url.pathname.includes('/riders/') && url.pathname.endsWith('.webp')) {
+    e.respondWith(
+      caches.open(RIDERS).then(async cache => {
+        const cached = await cache.match(req, { ignoreSearch: true });
         if (cached) return cached;
         const res = await fetch(req);
         if (res.ok) cache.put(req, res.clone());

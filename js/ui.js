@@ -12,15 +12,25 @@ import { pieceScene, framedBoard, FRAME, LIP } from './puzzlefx.js';
 import { store } from './store.js';
 import { Daily } from './store.js';
 import { todayKey, dailyRules } from './levels.js';
-import { shop, RIDER_ITEMS, HAT_ITEMS, TRAIL_ITEMS, GIFTS, TRY_ON, COINS_PER_LEVEL } from './shop.js';
-import { hatThumb, wearHat } from './hats.js';
+import { shop, ITEMS, RIDER_ITEMS, TRY_ON, COINS_PER_LEVEL } from './shop.js';
+import { house as houseArt, pop as popArt, tile as tileArt, emoji as emojiArt } from './art.js';
+import { wearHat, snapshot } from './hats.js';
+import { noteText, noteNow, notesLoaded } from './notes.js';
 import { riderFrame, riderFrames, frameAt, Trail, trailSprites } from './riders.js';
 import { ShopRider, isAnimal } from './shoprider.js';
 import { renderSVG } from './svgrider.js';
 import { poseAt } from './animals.js';
 import { iconEl, rich, splitIcon, uiScale } from './icons.js';
 
-const SHOP_ITEMS = { rider: RIDER_ITEMS, hat: HAT_ITEMS, trail: TRAIL_ITEMS };
+const SHOP_ITEMS = ITEMS;
+const KINDS = Object.keys(SHOP_ITEMS);
+
+/** A small pink "new" dot, with the word for VoiceOver. */
+function newDot() {
+  const d = h('span', 'new-dot');
+  d.append(h('span', 'sr-only', L.newItem()));
+  return d;
+}
 
 /** Sets an element's text; `{name}` in it becomes that drawn icon (see icons.js). */
 const setText = (el, text) => {
@@ -41,6 +51,8 @@ function bigIcon(...names) {
   el.append(...names.map((n, i) => iconEl(n, i ? 'ic extra' : 'ic')));
   return el;
 }
+
+const REDUCED_UI = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /** A phone on its side: style.css covers the game and asks her to turn it back, so it waits. */
 const sideways = matchMedia('(orientation: landscape) and (max-height: 500px) and (pointer: coarse)');
@@ -301,6 +313,11 @@ export class UI {
     shop.onChange(() => {
       if (this.menu && shop.coins > this.menu.coins.value) countTo(this.menu.coins, shop.coins, 0.5);
     });
+    // her dates and his notes arrive a moment after opening: a birthday gift or a note may now be due
+    notesLoaded.then(() => {
+      this.game?.refreshShop();
+      if (this.giftsStarted && shop.giftWaiting) this.maybeShowShopGift();
+    });
   }
 
   get anyOpen() { return sideways.matches || pieceScene.active || Object.values(this.layers).some(l => l.classList.contains('show')); }
@@ -407,6 +424,8 @@ export class UI {
     this.stopPreview = null;
     m.tab = tab;
     for (const [key, b] of Object.entries(m.tabs)) b.classList.toggle('on', key === tab);
+    m.tabs.shop.querySelector('.new-dot')?.remove();
+    if (tab !== 'shop' && (shop.hasNew || shop.giftWaiting)) m.tabs.shop.append(newDot());
     m.title.textContent = tab === 'play' ? L.paused() : L.tab(tab);
     m.coins.classList.toggle('hidden', tab !== 'shop' && tab !== 'play');
     m.panel.dataset.tab = tab;
@@ -781,6 +800,7 @@ export class UI {
       const p = puzzle.award(PIECES);
       await pieceScene.play(p, { origin: from });
       this.welcomeWaiting = false;
+      this.game.checkAchievements();
     });
     panel.append(open);
     layer.append(scrim, panel);
@@ -839,31 +859,54 @@ export class UI {
   shopPage(page, select) {
     let kind = select?.kind ?? this.shopKind ?? 'rider';
     let sel = select?.id ?? shop.current(kind);
-    const seg = segmented([['rider', L.riders()], ['hat', L.hats()], ['trail', L.trails()]], kind, k => {
+    const seg = segmented(KINDS.map(k => [k, L.kindName(k)]), kind, k => {
       kind = this.shopKind = k;
       sel = shop.current(k);
       paint();
+      seg.querySelector('button.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
     });
-    seg.classList.add('wide');
-    const stage = h('div', 'shop-stage');
+    // three kinds fit side by side; more scroll sideways as a rail of chips
+    seg.classList.add(KINDS.length > 3 ? 'rail' : 'wide');
+    requestAnimationFrame(() => seg.querySelector('button.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
+    // what's new this visit: marked as it's looked at, so the dots and ribbons last for this visit
+    const fresh = {};
+    const look = k => {
+      fresh[k] ??= new Set(shop.unseen(k));
+      shop.markSeen(k);
+      seg.querySelectorAll('button')[KINDS.indexOf(k)]?.querySelector('.new-dot')?.remove();
+    };
+    KINDS.forEach((k, i) => { if (shop.unseen(k).length) seg.querySelectorAll('button')[i].append(newDot()); });
+    // the stage, with what's chosen and what to do about it on it, stays put while the cards scroll
+    // under it: about 150px, so the grid starts above the fold even on a small phone
+    const stage = h('div', 'shop-stage compact');
     const canvas = h('canvas');
     const ribbon = h('span', 'ribbon', L.legendary());
     const pop = h('span', 'stage-pop', L.yours());
-    stage.append(canvas, ribbon, pop);
+    const info = h('div', 'stage-info');
     const name = h('h2', 'item-name');
     const text = h('p', 'item-text');
     const note = h('p', 'item-note');
     const action = h('div', 'item-action');
+    const words = h('div', 'stage-words');
+    words.append(name, text, note);
+    info.append(words, action);
+    stage.append(canvas, ribbon, pop, info);
+    const top = h('div', 'shop-top');
+    top.append(stage, seg);
     const grid = h('div', 'shop-grid');
-    page.append(seg, stage, name, text, note, action, grid);
-    const preview = this.startPreview(canvas, stage);
+    page.append(top, grid);
+    const preview = this.startPreview(canvas, stage, 0.72);
 
     const paint = () => {
-      const items = SHOP_ITEMS[kind];
+      look(kind);
+      // the gift row: hers, ready to open, earned by playing, and the next one coming
+      const items = SHOP_ITEMS[kind].filter(i => i.price != null || shop.giftShown(i));
       const item = items.find(i => i.id === sel) ?? items[0];
       if (kind === 'rider') preview.show(item.id, shop.trail, shop.hatOn(item.id));
       else if (kind === 'hat') preview.show(shop.model.id, shop.trail, item.id);
-      else preview.show(shop.rider, item.id, shop.hat);
+      else preview.show(shop.rider, kind === 'trail' ? item.id : shop.trail, shop.hat);
+      // the house, the pops or the tiles join the scene on their own tabs
+      preview.extra(kind, item.id);
       stage.classList.toggle('legendary', !!item.legendary);
       name.textContent = L.itemName(kind, item.id);
       setText(text, L.itemText(kind, item.id));
@@ -895,12 +938,17 @@ export class UI {
         sound.play('tap', { gain: 0.6 });
         paint();
         preview.hop(0.7);
+        // trying on a hat: it drops onto the head
+        if (kind === 'hat') preview.dropHat();
+        if (kind === 'pop') preview.popNow();
       };
       // for sale in price order, then the gifts in their own row; nothing moves after a purchase
       const cards = [];
       for (const it of items) {
         if (it.gift && !cards.gifts) { cards.gifts = true; cards.push(h('h3', 'grid-head', L.gifts())); }
-        cards.push(this.itemCard(kind, it, it.id === item.id, pick(it)));
+        const card = this.itemCard(kind, it, it.id === item.id, pick(it));
+        if (fresh[kind].has(it.id)) card.append(h('span', 'new-ribbon', L.newItem()));
+        cards.push(card);
       }
       grid.replaceChildren(...cards);
     };
@@ -927,7 +975,7 @@ export class UI {
     // gifts have no price: checked first, as `coins >= null` would be true
     if (item.price == null) {
       if (shop.giftOpen(item)) return button(L.openHatGift(), () => { if (shop.claim(item)) done(true); });
-      const b = h('button', 'chunky locked', L.giftOn(L.giftDay(GIFTS[item.gift])));
+      const b = h('button', 'chunky locked', item.earn ? L.earnHow(item.earn) : L.giftOn(L.giftDay(shop.giftDate(item))));
       b.disabled = true;
       return b;
     }
@@ -963,8 +1011,11 @@ export class UI {
       state = kind === 'hat' ? L.stateWearing() : L.stateInUse();
     } else if (owned) {
       state = L.stateOwned();
+    } else if (item.earn) {
+      card.append(h('span', 'card-price gift-chip', L.earnShort(item.earn)));
+      state = L.earnHow(item.earn);
     } else if (gift) {
-      const day = L.giftDay(GIFTS[item.gift]);
+      const day = open ? '' : L.giftDay(shop.giftDate(item));
       card.append(h('span', 'card-price gift-chip', open ? L.openHatGift() : `{gift} ${day}`));
       state = open ? L.stateGift() : L.giftOn(day);
     } else {
@@ -979,43 +1030,46 @@ export class UI {
     return card;
   }
 
-  /** A card's picture, drawn once and kept: the rider on its scooter, the hat, or a few bits of the trail. */
+  /**
+   * A card's picture, drawn once and kept: an animal in the hat it wears (or, on a hat card, the
+   * model animal's head in that hat), the girl on her scooter, or a few bits of the trail. The
+   * animals are drawn into images lazily, one at a time, as their cards scroll into view.
+   */
   thumb(kind, id) {
     this.thumbs ??= new Map();
     const u = uiScale();
-    const key = `${kind}:${id}:${u}`;
+    const model = shop.model.id;
+    const key = kind === 'hat' ? `hat:${id}:${u}:${model}` : kind === 'rider' ? `rider:${id}:${u}:${shop.hatOn(id)}` : `${kind}:${id}:${u}`;
     let c = this.thumbs.get(key);
     if (c) return c;
-    if (kind === 'hat') {
-      // the hat on its own, drawn into an image once it's ready (no hat: a dotted head)
-      const size = 64 * u;
+    if (kind === 'hat' || (kind === 'rider' && isAnimal(id))) {
+      const hat = kind === 'hat';
+      const w = hat ? 64 * u : 52 * u;
       c = h('span', 'hat-thumb');
-      c.w = c.h = size;
-      if (id === 'nohat') {
-        const [cv, ctx] = surfaceFor(size, size);
-        ctx.scale(u, u);
-        ctx.strokeStyle = 'rgba(30,34,8,0.28)';
-        ctx.lineWidth = 3.5;
-        ctx.lineCap = 'round';
-        ctx.setLineDash([6, 7]);
-        ctx.beginPath();
-        ctx.arc(32, 48, 18, Math.PI, 0);
-        ctx.stroke();
-        cv.style.width = cv.style.height = `${size}px`;
-        c.append(cv);
-      } else {
-        hatThumb(id, size).then(cv => { cv.style.width = cv.style.height = `${size}px`; c.append(cv); }).catch(() => {});
-      }
-    } else if (kind === 'rider' && isAnimal(id)) {
-      // the animals as the same SVG as the stage above, standing still (a moment with open eyes
-      // and every idle move at rest)
-      const r = renderSVG(id, { style: 'rich', size: (64 * u * 100) / 140, shadow: false });
-      r.pose(poseAt(id, 1.8));
-      c = r.svg;
-      c.w = (64 * u * 100) / 140;
-      c.h = (64 * u * 144) / 140;
+      c.w = w;
+      c.h = hat ? w : (w * 160) / 112;
+      this.lazyThumb(c, () => snapshot(hat ? model : id, hat ? id : shop.hatOn(id), w, hat));
     } else if (kind === 'rider') {
       c = riderFrame(id, 64 * u);
+    } else if (kind === 'decor') {
+      c = houseArt(46 * u, id === 'nodecor' ? [] : [id]);
+    } else if (kind === 'tile') {
+      const [cv, ctx] = surfaceFor(64 * u, 64 * u);
+      const t = tileArt(44 * u, 45 * u, 'normal', id), e = emojiArt('🍓', 30 * u);
+      ctx.drawImage(t, 10 * u, 9 * u, t.w, t.h);
+      ctx.drawImage(e, 32 * u - e.w / 2, 30 * u - e.h / 2, e.w, e.h);
+      c = cv;
+    } else if (kind === 'pop') {
+      const [cv, ctx] = surfaceFor(64 * u, 64 * u);
+      const p = popArt(id, 26 * u);
+      for (const [x, y, rot] of [[22, 26, -0.5], [44, 22, 0.4], [34, 44, 0.1]]) {
+        ctx.save();
+        ctx.translate(x * u, y * u);
+        ctx.rotate(rot);
+        ctx.drawImage(p, -p.w / 2, -p.h / 2, p.w, p.h);
+        ctx.restore();
+      }
+      c = cv;
     } else {
       const sprites = trailSprites(id, 1.05 * u);
       const [cv, ctx] = surfaceFor(64 * u, 64 * u);
@@ -1053,13 +1107,44 @@ export class UI {
   }
 
   /**
+   * Fills placeholder `el` with the canvas `make()` resolves to, once it scrolls near the view.
+   * One is drawn at a time, so opening a tab never stalls on twenty pictures at once.
+   */
+  lazyThumb(el, make) {
+    const q = (this.thumbQueue ??= { jobs: [], busy: false });
+    const run = () => {
+      if (q.busy || !q.jobs.length) return;
+      q.busy = true;
+      const [target, job] = q.jobs.shift();
+      job().then(cv => {
+        cv.style.width = `${target.w}px`;
+        cv.style.height = `${target.h}px`;
+        target.replaceChildren(cv);
+      }).catch(() => {}).finally(() => { q.busy = false; setTimeout(run, 0); });
+    };
+    this.thumbSeen ??= typeof IntersectionObserver === 'function'
+      ? new IntersectionObserver(entries => {
+        for (const e of entries) {
+          if (!e.isIntersecting) continue;
+          this.thumbSeen.unobserve(e.target);
+          q.jobs.push([e.target, e.target.make]);
+        }
+        run();
+      }, { rootMargin: '200px' })
+      : null;
+    el.make = make;
+    if (this.thumbSeen) this.thumbSeen.observe(el);
+    else { q.jobs.push([el, make]); run(); }
+  }
+
+  /**
    * The shop's stage: sky, a road that scrolls, and the rider bobbing along with its trail. The
    * animals are live SVG that do tricks (shoprider.js); the girl is drawn in the canvas. Runs only
    * while the shop tab is showing. Returns { show(rider, trail, hat), hop(), celebrate() }.
    */
-  startPreview(canvas, stage) {
+  startPreview(canvas, stage, scale = 1) {
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    const u = uiScale();
+    const u = uiScale() * scale;
     const H = 136 * u, RIDER = 104 * u, ROAD = 34 * u;
     const s = RIDER / 132;
     let W = 0, raf = 0, riderId = null, frames = null, trail = null, trailId = null;
@@ -1118,6 +1203,7 @@ export class UI {
         trail.update(t, x - RIDER * 0.3, bottom - RIDER * 0.3 + bob, speed);
         trail.draw(ctx, t, dpr);
       }
+      drawExtra(t);
       if (actor) {
         actor.pose(t, x, bottom);
       } else {
@@ -1140,7 +1226,43 @@ export class UI {
         ctx.globalAlpha = 1;
       }
     };
+    let extra = null; // { kind, id, sprites }: the house, pops or tiles on their tabs
+    let nextPop = 0;
+    const burstPops = t => {
+      for (let i = 0; i < 10; i++) {
+        const a = -Math.PI / 2 + (Math.random() - 0.5) * 2.6, v = (90 + Math.random() * 110) * u;
+        bits.push({ t0: t, life: 0.9 + Math.random() * 0.3, x: W / 2, y: H - 70 * u, vx: Math.cos(a) * v, vy: Math.sin(a) * v,
+          rot: Math.random() * 6, vr: (Math.random() - 0.5) * 9, sprite: extra.sprites.pop });
+      }
+    };
+    const drawExtra = t => {
+      if (!extra) return;
+      const sp = extra.sprites;
+      if (sp.house) ctx.drawImage(sp.house, W - sp.house.w - 10 * u, H - ROAD - sp.house.h + 4 * u, sp.house.w, sp.house.h);
+      if (sp.tiles) sp.tiles.forEach((im, i) => ctx.drawImage(im, 14 * u + i * 46 * u, 14 * u, im.w, im.h));
+      if (sp.pop && t >= nextPop && !REDUCED_UI) { nextPop = t + 1.6; burstPops(t); }
+    };
     const api = {
+      /** What joins the scene on the decor, pop and tile tabs (nothing on the others). */
+      extra(kind, id) {
+        if (extra && extra.kind === kind && extra.id === id) return;
+        if (!['decor', 'pop', 'tile'].includes(kind)) { extra = null; return; }
+        const sprites = {};
+        if (kind === 'decor') sprites.house = houseArt(64 * u, id === 'nodecor' ? [] : [id]);
+        if (kind === 'pop') sprites.pop = popArt(id, 22 * u);
+        if (kind === 'tile') {
+          sprites.tiles = ['🍓', '🐰', '🍩'].map(ch => {
+            const [cv, c2] = surfaceFor(42 * u, 43 * u);
+            const tl = tileArt(42 * u, 43 * u, 'normal', id), e = emojiArt(ch, 29 * u);
+            c2.drawImage(tl, 0, 0, tl.w, tl.h);
+            c2.drawImage(e, 21 * u - e.w / 2, 19.5 * u - e.h / 2, e.w, e.h);
+            return cv;
+          });
+        }
+        extra = { kind, id, sprites };
+        nextPop = 0;
+      },
+      popNow() { if (extra?.sprites.pop) nextPop = 0; },
       show(rider, trailName, hat = 'nohat') {
         if (rider !== riderId) {
           riderId = rider;
@@ -1156,6 +1278,7 @@ export class UI {
         actor?.setHat(hat);
         if (trailName !== trailId) { trailId = trailName; trail = trailName === 'none' ? null : new Trail(trailName, s); }
       },
+      dropHat() { actor?.dropHat(); },
       hop(k = 1) {
         if (actor) actor.trick('hop', k);
         else { hopT0 = performance.now() / 1000; hopH = 10 * k * u; }
@@ -1190,20 +1313,27 @@ export class UI {
    * one at a time. Waits for the welcome, the opening deal and any panel to be out of the way.
    */
   maybeShowShopGift() {
+    this.giftsStarted = true; // from the first call, a few moments after the game appears
     const hat = shop.pendingGifts()[0];
-    if (!shop.giftPending && !hat) return;
+    const queued = shop.queue()[0];
+    const note = shop.pendingNotes()[0];
+    if (!shop.giftPending && !hat && !queued && !note) return;
     if (this.anyOpen || this.breakKind || this.welcomeWaiting || this.game.drag || this.game.finishing) {
-      setTimeout(() => this.maybeShowShopGift(), 2500);
+      clearTimeout(this.giftTimer);
+      this.giftTimer = setTimeout(() => this.maybeShowShopGift(), 2500);
       return;
     }
     if (shop.giftPending) this.showStarterGift();
-    else this.showHatGift(hat);
+    else if (hat) this.showHatGift(hat);
+    else if (queued) this.showQueuedGift(shop.unqueue());
+    else this.showNote(note);
   }
 
   /** Closes a gift panel, and lets the next gift (if any) come along after it. */
   closeGift() {
     this.hide('gift');
-    setTimeout(() => this.maybeShowShopGift(), 900);
+    clearTimeout(this.giftTimer);
+    this.giftTimer = setTimeout(() => this.maybeShowShopGift(), 900);
   }
 
   showStarterGift() {
@@ -1243,11 +1373,11 @@ export class UI {
    * A gift hat: it's hers as soon as the panel opens (and on her animal), shown on every animal she
    * owns at once; with none yet, on the try-on bunny, waiting for her.
    */
-  showHatGift(item) {
-    shop.claim(item);
+  showHatGift(item, reason = item.gift, noteId = reason) {
+    if (item.gift) shop.claim(item);
     const layer = this.layers.gift;
     layer.replaceChildren();
-    const [scrim, panel] = this.panel(L.giftTitle(item.id));
+    const [scrim, panel] = this.panel(L.giftTitle(reason));
     panel.classList.add('gift-panel');
     const close = () => this.closeGift();
     scrim.addEventListener('click', close);
@@ -1264,17 +1394,104 @@ export class UI {
       wrap.append(r.svg);
       row.append(wrap);
     });
-    panel.append(row, h('p', 'why', L.giftText(item.id)));
+    panel.append(row, h('p', 'why', L.giftText(reason, item.id)));
+    this.appendNote(panel, noteId);
     if (!mine.length) panel.append(h('p', 'item-note', L.giftWaits()));
     panel.append(button(L.putItOn(), () => {
       this.closeGift();
       this.openMenu('shop', { kind: 'hat', id: item.id });
     }));
-    panel.append(quietButton(L.later(), close));
+    panel.append(this.heartBack(`${L.itemName('hat', item.id)} (${reason})`), quietButton(L.later(), close));
     layer.append(scrim, panel);
     this.show('gift');
     sound.play('tap');
-    report.note('hatGift', item.id);
+    report.note('hatGift', `${item.id} (${reason})`);
+  }
+
+  /** A gift from the queue (shop.grant): a hat earned by playing, the mystery gift, or its coins. */
+  showQueuedGift(entry) {
+    if (!entry) return;
+    if (entry.kind === 'hat') {
+      const item = shop.item('hat', entry.id);
+      if (item) { this.showHatGift(item, entry.reason, entry.noteId ?? entry.reason); return; }
+    }
+    if (entry.kind !== 'coins') { this.closeGift(); return; }
+    const layer = this.layers.gift;
+    layer.replaceChildren();
+    const [scrim, panel] = this.panel(L.giftTitle(entry.reason));
+    panel.classList.add('gift-panel');
+    const close = () => this.closeGift();
+    scrim.addEventListener('click', close);
+    panel.append(bigIcon('gift'), h('p', 'why', L.giftText(entry.reason, 'coins')));
+    this.appendNote(panel, entry.noteId);
+    const line = h('div', 'gift-line');
+    const chip = coinChip(0, 'big');
+    countTo(chip, entry.n, 0.9, 0.5);
+    line.append(chip);
+    panel.append(line, button(L.thankYou(), close), this.heartBack(`${entry.n} coins (${entry.reason})`));
+    layer.append(scrim, panel);
+    this.show('gift');
+    sound.play('tap');
+    report.note('coinGift', `${entry.n} (${entry.reason})`);
+  }
+
+  /**
+   * "Send a heart back": a small button she taps herself, which tells him she opened the gift.
+   * Nothing is sent unless she taps, and only once per gift.
+   */
+  heartBack(what) {
+    const b = h('button', 'quiet heart-back', L.heartBack());
+    b.addEventListener('click', () => {
+      sound.play('tap');
+      b.disabled = true;
+      setText(b, L.heartSent());
+      report.ping(`She opened a gift and sent a heart back: ${what} 💗`).catch(() => {});
+    }, { once: true });
+    return b;
+  }
+
+  /** The letter in the mailbox on the house: his 'mailbox' note, or a few words of his anyway. */
+  showMailbox() {
+    if (this.anyOpen) return;
+    const layer = this.layers.gift;
+    layer.replaceChildren();
+    const [scrim, panel] = this.panel(L.mailboxTitle());
+    panel.classList.add('gift-panel');
+    const close = () => this.hide('gift');
+    scrim.addEventListener('click', close);
+    const note = h('p', 'gift-note', noteNow('mailbox') ?? L.mailboxNote());
+    panel.append(bigIcon('envelope'), note, button(L.thankYou(), close));
+    layer.append(scrim, panel);
+    this.show('gift');
+    report.note('mailbox');
+  }
+
+  /** A day that brings only a note from him (Valentine's, 520, 七夕, the anniversary). */
+  showNote(id) {
+    const text = noteNow(id);
+    shop.readNote(id);
+    if (!text) { this.closeGift(); return; }
+    const layer = this.layers.gift;
+    layer.replaceChildren();
+    const [scrim, panel] = this.panel(L.noteTitle(id));
+    panel.classList.add('gift-panel');
+    const close = () => this.closeGift();
+    scrim.addEventListener('click', close);
+    const note = h('p', 'gift-note', text);
+    panel.append(bigIcon('envelope'), note, button(L.thankYou(), close), this.heartBack(`the ${id} note`));
+    layer.append(scrim, panel);
+    this.show('gift');
+    sound.play('tap');
+    report.note('note', id);
+  }
+
+  /** His note for a gift, in her language, when there is one and it can be read. */
+  appendNote(panel, noteId) {
+    if (!noteId) return;
+    const el = h('p', 'gift-note');
+    el.hidden = true;
+    panel.append(el);
+    noteText(noteId).then(text => { if (text) { el.textContent = text; el.hidden = false; } }).catch(() => {});
   }
 
   // ---------------------------------------------------------------- album
