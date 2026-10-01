@@ -23,14 +23,18 @@ const REDUCED = typeof matchMedia === 'function' && matchMedia('(prefers-reduced
 
 /** Where each animal's crown is (head coordinates), and what happens to its own head things. */
 export const FIT = {
-  bunny: { x: 47, y: 46.5, w: 30, r: -0.05, carry: [{ part: 'bow', at: [46.5, 45.5], to: 'pin', k: 0.62 }] },
+  bunny: { x: 47, y: 46.5, w: 30, r: -0.05, carry: [{ part: 'bow', at: [46.5, 45.5], to: 'pin', k: 0.62 }], per: { goat: { spread: 0.75, horns: 0.8 } } },
   capy: { x: 61, y: 44.8, w: 26, r: 0.03, carry: [{ part: 'yuzu', at: [57.5, 44.3], to: 'perch' }] },
-  kitty: { x: 47.5, y: 46, w: 28, r: 0.03 },
+  kitty: { x: 47.5, y: 46, w: 28, r: 0.03, per: { goat: { spread: 0.8, horns: 0.8 } } },
   penguin: { x: 48, y: 51.5, w: 29, r: 0.05, hide: ['tuft'] },
-  panda: { x: 46.5, y: 46, w: 27, r: 0, carry: [{ part: 'sprout', at: [47, 45], to: 'perch' }] },
+  panda: { x: 46.5, y: 46, w: 27, r: 0, carry: [{ part: 'sprout', at: [47, 45], to: 'perch' }], per: { goat: { spread: 0.85, horns: 0.8 } } },
   unicorn: { x: 48.5, y: 45.5, w: 28, r: -0.03, lift: ['horn', 'twinkle'],
     // tall cones slide to the back of the head and lean away, so the horn stands in front of them
-    per: { party: { dx: -6, dy: 1, r: -0.32 }, witch: { dx: -5, dy: 0.5, r: -0.22 }, tophat: { dx: -6, dy: 0.5, r: -0.2 } } },
+    per: { party: { dx: -6, dy: 1, r: -0.32 }, witch: { dx: -5, dy: 0.5, r: -0.22 }, tophat: { dx: -6, dy: 0.5, r: -0.2 },
+      cake: { dx: -5, dy: 0.5, r: -0.22 }, jiaozi: { dx: -5, dy: 0.5, r: -0.12 }, tangyuan: { dx: -5, dy: 0.5, r: -0.12 },
+      pumpkin: { dx: -4, dy: 0.5, r: -0.15 }, gradcap: { dy: -1, r: -0.08 }, nightcap: { dx: -2, r: -0.1 },
+      // its own horn is the star: the goat band goes on without horns
+      goat: { horns: 0 } } },
 };
 
 /** A tiny drawing kit with the same looks as svgrider.js, writing into one SVG's <defs>. */
@@ -220,7 +224,93 @@ export const HATS = {
       + k.anim('spin', [0, -19.5], k.shape(P.ell(-6.5, -19.5, 6.5, 1.8), '#FF6F7F', 1.6) + k.shape(P.ell(6.5, -19.5, 6.5, 1.8), '#FFDB7E', 1.6))
       + k.shape(P.ell(0, -19.5, 1.8, 1.8), '#C3A2FF', 1.4),
   },
+
+  // ---- gifts for the days of the year (see dates.js FESTIVALS) and things she earns
+
+  jiaozi: { // 冬至 in the north: a little bowl of dumplings, cream with blush faces (never all white)
+    tier: 'seasonal', season: '冬至', perch: [10.5, -10.5], pin: [-11, -4], scale: 1.1,
+    draw: (k, small) => BOWL(k, small)
+      + [[-7, -9.5, -0.25], [7, -9.5, 0.25], [0, -12.5, 0]].map(([x, y, r]) => `<g transform="translate(${x} ${y}) rotate(${n2(r * 57.3)})">`
+        + k.solid('M-6 0C-6.5 -4 -3.5 -7 0 -7C3.5 -7 6.5 -4 6 0Q0 1.6 -6 0Z', '#FFF1D6', '#F0D9AE', { lw: 1.8 })
+        + (small ? '' : k.line('M-3 -6.2L-2.3 -4.6M0 -7L0 -5.3M3 -6.2L2.3 -4.6', 1, 'rgba(160,110,50,0.45)'))
+        + FACE(0, -2.2) + '</g>').join('')
+      + (small ? '' : STEAM(k, [[-4, -21], [4, -22]])),
+  },
+  tangyuan: { // 汤圆: pink, cream and yellow, for 元宵 (or 冬至 in the south)
+    tier: 'seasonal', season: '元宵', perch: [10.5, -10.5], pin: [-11, -4], scale: 1.1,
+    draw: (k, small) => BOWL(k, small)
+      + [[-6.5, -11, '#FFB3CB'], [6.5, -11, '#FFE07A'], [0, -14, '#FFF1D6']].map(([x, y, c]) => k.solid(P.ell(x, y, 5, 4.6), c, mix(c, '#C06080', 0.12), { lw: 1.8 })
+        + FACE(x, y + 0.6)).join('')
+      + (small ? '' : STEAM(k, [[-3, -22], [5, -23]])),
+  },
+  nightcap: { // pale blue, a droopy tip and a moon on the end
+    tier: 'rare', perch: [1, -20], pin: [-10, -1],
+    draw: k => k.anim('wobble', [6, -16], k.solid('M5 -18C12 -20 19 -15 21 -6L16.5 -5C15 -10 11 -13 5 -12Z', '#A9D4FF', '#88BDF2')
+      + k.shape('M19.5 -7.5A4.3 4.3 0 1 0 22.4 0.4A3.4 3.4 0 1 1 19.5 -7.5Z', '#FFE07A', 1.6))
+      + k.solid(P.blob([[-13.5, 1], [-14, -11], [-4, -19.5], [7, -19], [13.5, -11], [13.5, 1]]), '#A9D4FF', '#88BDF2', {
+        inside: [[-6, -12], [3, -8], [-9, -4], [7, -14]].map(([x, y]) => k.shape(P.star4(x, y, 1.9, 0.3), '#FFF6C8', 0.8)).join(''),
+      })
+      + k.solid('M-15 -3Q0 -6 15 -3L15 3Q0 0 -15 3Z', '#D8ECFF', '#BBDAF7', { lw: 2 }),
+  },
+  gradcap: { // navy mortarboard with a gold tassel
+    tier: 'rare', perch: [-6, -11], pin: [-10, -1],
+    draw: k => k.solid('M-11.5 1C-12 -4 -11 -7 -10 -8L10 -8C11 -7 12 -4 11.5 1Q0 3 -11.5 1Z', '#3B4A7A', '#2C3862')
+      + k.solid('M-20 -9L0 -15L20 -9L0 -3Z', '#4A5B92', '#36457A', { dir: [-0.6, 1.4] })
+      + k.shape(P.ell(0, -9, 1.6, 1), '#FFD23F', 1.1)
+      + k.line('M0 -9L12 -7.4', 1.4, '#E8B020')
+      + k.anim('wobble', [12, -7.4], k.line('M12 -7.4L12.4 -1.5', 1.6, '#E8B020')
+        + k.shape('M10.6 -2.2L14.2 -2.2L14.8 3L10 3Z', '#FFD23F', 1.2)),
+  },
+  cake: { // two pink tiers and one candle (for her birthday)
+    tier: 'seasonal', perch: [6.5, -15], pin: [-9, -4],
+    draw: (k, small) => k.solid('M-13 1L-13 -8Q0 -10 13 -8L13 1Q0 3 -13 1Z', '#FFB3CB', '#F48FB0')
+      + k.shape('M-13 -8Q0 -10 13 -8L13 -5.5Q10.5 -3 9 -5.5Q6 -2.5 4 -5.5Q1 -3 -1 -5.5Q-4 -2.5 -6 -5.5Q-9 -3 -11 -5.5Q-12 -4 -13 -5.5Z', '#FFF4E4', 1.6)
+      + k.solid('M-8.5 -8.6L-8.5 -15Q0 -16.5 8.5 -15L8.5 -8.6Q0 -7.4 -8.5 -8.6Z', '#FF8FB5', '#EE6E98')
+      + k.shape('M-8.5 -15Q0 -16.5 8.5 -15L8.5 -13Q6.5 -11 5 -13Q2.5 -10.5 0.5 -13Q-2 -11 -4 -13Q-6.5 -11 -8.5 -13Z', '#FFF4E4', 1.4)
+      + (small ? '' : [[-9, -2.5, '#7CC8FF'], [-3, -1.6, '#FFE07A'], [3.5, -2.4, '#C3A2FF'], [9, -1.8, '#98E8CB'], [-4, -11, '#FFE07A'], [4, -10.6, '#7CC8FF']]
+        .map(([x, y, c]) => `<rect x="${x - 1}" y="${y - 0.45}" width="2" height="0.9" rx="0.45" fill="${c}" transform="rotate(${(x * 37) % 60 - 30} ${x} ${y})"/>`).join(''))
+      + k.shape('M-1.2 -15.5L-1.2 -21.5L1.2 -21.5L1.2 -15.5Z', '#9CCBFF', 1.2)
+      + k.anim('flicker', [0, -22], k.shape('M0 -27.5C2.4 -25 2.4 -22.5 0 -21.8C-2.4 -22.5 -2.4 -25 0 -27.5Z', '#FFB23F', 1.1)),
+  },
+  goat: { // 2027 is the year of the goat: cream curled horns on a band (not red goat imagery, not 喜羊羊)
+    tier: 'seasonal', season: '春节', perch: null, pin: [-13, -1],
+    draw: (k, small, o = {}) => {
+      const sp = o.spread ?? 1, hs = o.horns ?? 1;
+      const horn = side => `<g transform="translate(${n2(side * 11 * sp)} -3) scale(${n2(side * hs)} ${n2(hs)})">`
+        + k.shape('M-2.5 1C-3 -5 1 -9.5 6 -9C10 -8.5 11.5 -4 9 -1.5C7 0.5 4 -0.5 4.5 -3C5 -4.8 7.2 -4.5 7 -3', '#FFF4E4', 1.8)
+        + k.line('M-1.5 -2.5Q0.5 -6 4 -7M0.5 0Q1.5 -3 4 -4', 1, 'rgba(160,110,50,0.4)') + '</g>';
+      return (hs ? horn(-1) + horn(1) : '')
+        + k.line('M-16 2Q-15 -6 0 -7Q15 -6 16 2', 3.6, INK) + k.line('M-16 2Q-15 -6 0 -7Q15 -6 16 2', 1.8, '#FFC48A')
+        + (small ? '' : k.shape('M0 -12L3.6 -8L0 -4L-3.6 -8Z', '#FF5C6F', 1.2)
+          + `<text x="0" y="-6.6" font-size="4" text-anchor="middle" fill="#FFE07A" font-weight="700">福</text>`);
+    },
+  },
+  pumpkin: { // Halloween 2027: a little pumpkin with a smile
+    tier: 'seasonal', season: 'Halloween', perch: [6.5, -16.5], pin: [-11, -4],
+    draw: (k, small) => k.solid('M-14 0C-17 -6 -14 -15 -6 -15.5Q0 -17 6 -15.5C14 -15 17 -6 14 0Q0 3.5 -14 0Z', '#FFA630', '#F08A1A', {
+      inside: k.line('M-6 -15.2Q-9 -7 -7 0.8M6 -15.2Q9 -7 7 0.8M0 -16.5L0 1.6', 1.3, 'rgba(160,70,0,0.35)')
+        + (small ? k.line('M-6 -5Q0 -1 6 -5', 1.8)
+          : `<path d="M-6.5 -10L-4 -12.5L-1.5 -10Z M1.5 -10L4 -12.5L6.5 -10Z" fill="${INK}"/>` + k.line('M-7 -6Q0 -1 7 -6', 1.8)),
+    })
+      + k.line('M0 -16C0 -19 1.5 -20.5 3.5 -20.5C5.5 -20.5 6 -18.5 4.5 -18', 2.4, '#7A4A1C')
+      + k.leaf(-4, -18, 3.4, -0.5),
+  },
 };
+
+/** The bowl the 冬至 and 元宵 hats sit in: blue porcelain with a pink band. */
+function BOWL(k, small) {
+  return k.solid('M-14 -9Q-13.5 1 0 1.5Q13.5 1 14 -9Z', '#9CCBFF', '#7CB2EE', {
+    inside: k.fill('M-13.7 -6Q0 -4.5 13.7 -6L13.2 -3.6Q0 -2 -13.2 -3.6Z', '#FF9CC2')
+      + (small ? '' : [[-7, -1.3], [0, -0.5], [7, -1.3]].map(([x, y]) => `<circle cx="${x}" cy="${y}" r="0.9" fill="#FFF6FA"/>`).join('')),
+  })
+    + k.shape(P.ell(0, -9, 14.4, 2.4), '#EAF4FF', 1.8);
+}
+/** A tiny sleepy-happy face for a dumpling: two dots and blush. */
+const FACE = (x, y) => `<circle cx="${n2(x - 1.6)}" cy="${y}" r="0.6" fill="${INK}"/><circle cx="${n2(x + 1.6)}" cy="${y}" r="0.6" fill="${INK}"/>`
+  + `<ellipse cx="${n2(x - 2.9)}" cy="${n2(y + 1)}" rx="1" ry="0.6" fill="rgba(255,112,150,0.55)"/><ellipse cx="${n2(x + 2.9)}" cy="${n2(y + 1)}" rx="1" ry="0.6" fill="rgba(255,112,150,0.55)"/>`;
+/** Wisps of steam rising off a bowl. */
+const STEAM = (k, spots) => spots.map(([x, y], i) => k.anim('steam', [x, y + i * 0.5],
+  k.line(`M${x} ${y + 5}C${x - 2} ${y + 3} ${x + 2} ${y + 1.5} ${x} ${y - 1}`, 1.4, 'rgba(255,255,255,0.9)'))).join('');
 export const HAT_IDS = Object.keys(HATS);
 
 /** The SVG nodes of a part, outermost first (the <g> that places it). */
@@ -243,7 +333,7 @@ export function wearHat(r, id, hatId, { style = 'rich', lod = 'full' } = {}) {
   const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
   g.setAttribute('class', 'hat');
   g.setAttribute('transform', `translate(${n2(fit.x)} ${n2(fit.y)}) rotate(${n2(rot * 180 / Math.PI)}) scale(${n2(s)})`);
-  g.innerHTML = hat.draw(k, small);
+  g.innerHTML = hat.draw(k, small, o);
   head.append(g);
 
   const undo = [];
@@ -292,6 +382,12 @@ export function wearHat(r, id, hatId, { style = 'rich', lod = 'full' } = {}) {
         if (kind === 'wobble') tr = `rotate(${n2(-hr * 2.6 + 4 * Math.sin(t * 8.5))} ${px} ${py})`;
         else if (kind === 'spin') tr = `translate(${px} ${py}) scale(${n2(Math.cos(t * 22))} 1) translate(${-px} ${-py})`;
         else if (kind === 'bob') tr = `translate(0 ${n2(-1.4 + 1.4 * Math.sin(t * 3))})`;
+        else if (kind === 'flicker') tr = `translate(${px} ${py}) scale(${n2(1 + 0.08 * Math.sin(t * 17))} ${n2(1 + 0.16 * Math.sin(t * 11 + 1))}) translate(${-px} ${-py})`;
+        else if (kind === 'steam') {
+          const u = (t * 0.55 + px * 0.13) % 1;
+          tr = `translate(0 ${n2(-5 * u)})`;
+          el.setAttribute('opacity', n2(Math.sin(u * Math.PI)));
+        }
         else if (kind === 'twinkle') { const u = (t % 2.2) / 2.2, a = u < 0.3 ? Math.sin(u / 0.3 * Math.PI) : 0; tr = `translate(${px} ${py}) scale(${n2(a)}) rotate(${n2(u * 120)}) translate(${-px} ${-py})`; }
         el.setAttribute('transform', tr);
       }

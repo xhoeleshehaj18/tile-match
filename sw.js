@@ -13,7 +13,7 @@ const APP = [
   'js/report.js', 'js/backup.js', 'js/splash.js', 'js/levels.js', 'js/puzzle.js', 'js/puzzlefx.js',
   'js/shop.js', 'js/riders.js', 'js/icons.js', 'js/hud.js',
   'js/animals.js', 'js/svgrider.js', 'js/shoprider.js', 'js/painted.js', 'js/lib/gsap.min.js',
-  'js/hats.js', 'js/dates.js',
+  'js/hats.js', 'js/dates.js', 'js/notes.js',
   'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
 ];
 

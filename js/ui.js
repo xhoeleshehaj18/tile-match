@@ -12,8 +12,9 @@ import { pieceScene, framedBoard, FRAME, LIP } from './puzzlefx.js';
 import { store } from './store.js';
 import { Daily } from './store.js';
 import { todayKey, dailyRules } from './levels.js';
-import { shop, RIDER_ITEMS, HAT_ITEMS, TRAIL_ITEMS, GIFTS, TRY_ON, COINS_PER_LEVEL } from './shop.js';
+import { shop, RIDER_ITEMS, HAT_ITEMS, TRAIL_ITEMS, TRY_ON, COINS_PER_LEVEL } from './shop.js';
 import { hatThumb, wearHat } from './hats.js';
+import { noteText } from './notes.js';
 import { riderFrame, riderFrames, frameAt, Trail, trailSprites } from './riders.js';
 import { ShopRider, isAnimal } from './shoprider.js';
 import { renderSVG } from './svgrider.js';
@@ -859,7 +860,8 @@ export class UI {
     const preview = this.startPreview(canvas, stage);
 
     const paint = () => {
-      const items = SHOP_ITEMS[kind];
+      // the gift row: hers, ready to open, earned by playing, and the next one coming
+      const items = SHOP_ITEMS[kind].filter(i => i.price != null || shop.giftShown(i));
       const item = items.find(i => i.id === sel) ?? items[0];
       if (kind === 'rider') preview.show(item.id, shop.trail, shop.hatOn(item.id));
       else if (kind === 'hat') preview.show(shop.model.id, shop.trail, item.id);
@@ -927,7 +929,7 @@ export class UI {
     // gifts have no price: checked first, as `coins >= null` would be true
     if (item.price == null) {
       if (shop.giftOpen(item)) return button(L.openHatGift(), () => { if (shop.claim(item)) done(true); });
-      const b = h('button', 'chunky locked', L.giftOn(L.giftDay(GIFTS[item.gift])));
+      const b = h('button', 'chunky locked', item.earn ? L.earnHow(item.earn) : L.giftOn(L.giftDay(shop.giftDate(item))));
       b.disabled = true;
       return b;
     }
@@ -963,8 +965,11 @@ export class UI {
       state = kind === 'hat' ? L.stateWearing() : L.stateInUse();
     } else if (owned) {
       state = L.stateOwned();
+    } else if (item.earn) {
+      card.append(h('span', 'card-price gift-chip', L.earnShort(item.earn)));
+      state = L.earnHow(item.earn);
     } else if (gift) {
-      const day = L.giftDay(GIFTS[item.gift]);
+      const day = open ? '' : L.giftDay(shop.giftDate(item));
       card.append(h('span', 'card-price gift-chip', open ? L.openHatGift() : `{gift} ${day}`));
       state = open ? L.stateGift() : L.giftOn(day);
     } else {
@@ -1191,19 +1196,23 @@ export class UI {
    */
   maybeShowShopGift() {
     const hat = shop.pendingGifts()[0];
-    if (!shop.giftPending && !hat) return;
+    const queued = shop.queue()[0];
+    if (!shop.giftPending && !hat && !queued) return;
     if (this.anyOpen || this.breakKind || this.welcomeWaiting || this.game.drag || this.game.finishing) {
-      setTimeout(() => this.maybeShowShopGift(), 2500);
+      clearTimeout(this.giftTimer);
+      this.giftTimer = setTimeout(() => this.maybeShowShopGift(), 2500);
       return;
     }
     if (shop.giftPending) this.showStarterGift();
-    else this.showHatGift(hat);
+    else if (hat) this.showHatGift(hat);
+    else this.showQueuedGift(shop.unqueue());
   }
 
   /** Closes a gift panel, and lets the next gift (if any) come along after it. */
   closeGift() {
     this.hide('gift');
-    setTimeout(() => this.maybeShowShopGift(), 900);
+    clearTimeout(this.giftTimer);
+    this.giftTimer = setTimeout(() => this.maybeShowShopGift(), 900);
   }
 
   showStarterGift() {
@@ -1243,11 +1252,11 @@ export class UI {
    * A gift hat: it's hers as soon as the panel opens (and on her animal), shown on every animal she
    * owns at once; with none yet, on the try-on bunny, waiting for her.
    */
-  showHatGift(item) {
-    shop.claim(item);
+  showHatGift(item, reason = item.gift, noteId = null) {
+    if (item.gift) shop.claim(item);
     const layer = this.layers.gift;
     layer.replaceChildren();
-    const [scrim, panel] = this.panel(L.giftTitle(item.id));
+    const [scrim, panel] = this.panel(L.giftTitle(reason));
     panel.classList.add('gift-panel');
     const close = () => this.closeGift();
     scrim.addEventListener('click', close);
@@ -1264,7 +1273,8 @@ export class UI {
       wrap.append(r.svg);
       row.append(wrap);
     });
-    panel.append(row, h('p', 'why', L.giftText(item.id)));
+    panel.append(row, h('p', 'why', L.giftText(reason, item.id)));
+    this.appendNote(panel, noteId);
     if (!mine.length) panel.append(h('p', 'item-note', L.giftWaits()));
     panel.append(button(L.putItOn(), () => {
       this.closeGift();
@@ -1274,7 +1284,43 @@ export class UI {
     layer.append(scrim, panel);
     this.show('gift');
     sound.play('tap');
-    report.note('hatGift', item.id);
+    report.note('hatGift', `${item.id} (${reason})`);
+  }
+
+  /** A gift from the queue (shop.grant): a hat earned by playing, the mystery gift, or its coins. */
+  showQueuedGift(entry) {
+    if (!entry) return;
+    if (entry.kind === 'hat') {
+      const item = shop.item('hat', entry.id);
+      if (item) { this.showHatGift(item, entry.reason, entry.noteId); return; }
+    }
+    if (entry.kind !== 'coins') { this.closeGift(); return; }
+    const layer = this.layers.gift;
+    layer.replaceChildren();
+    const [scrim, panel] = this.panel(L.giftTitle(entry.reason));
+    panel.classList.add('gift-panel');
+    const close = () => this.closeGift();
+    scrim.addEventListener('click', close);
+    panel.append(bigIcon('gift'), h('p', 'why', L.giftText(entry.reason, 'coins')));
+    this.appendNote(panel, entry.noteId);
+    const line = h('div', 'gift-line');
+    const chip = coinChip(0, 'big');
+    countTo(chip, entry.n, 0.9, 0.5);
+    line.append(chip);
+    panel.append(line, button(L.thankYou(), close));
+    layer.append(scrim, panel);
+    this.show('gift');
+    sound.play('tap');
+    report.note('coinGift', `${entry.n} (${entry.reason})`);
+  }
+
+  /** His note for a gift, in her language, when there is one and it can be read. */
+  appendNote(panel, noteId) {
+    if (!noteId) return;
+    const el = h('p', 'gift-note');
+    el.hidden = true;
+    panel.append(el);
+    noteText(noteId).then(text => { if (text) { el.textContent = text; el.hidden = false; } }).catch(() => {});
   }
 
   // ---------------------------------------------------------------- album

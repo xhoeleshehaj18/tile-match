@@ -38,7 +38,8 @@
 // Otherwise new prices keep away from the digit 4.
 
 import { store } from './store.js';
-import { today } from './dates.js';
+import { today, festivalFor } from './dates.js';
+import { personalDate } from './notes.js';
 
 export const RIDER_ITEMS = [
   { id: 'girl', price: 0 },
@@ -74,13 +75,26 @@ export const HAT_ITEMS = [
   { id: 'tiger', price: 888 },
   { id: 'tophat', price: 1314 },
   { id: 'crown', price: 2000, legendary: true },
-  // gifts have no price (so never "free": price 0 would mean everyone owns them)
+  // gifts have no price (so never "free": price 0 would mean everyone owns them); dated ones come
+  // from dates.js FESTIVALS, the birthday's from her encrypted dates (notes.js)
   { id: 'beanie', price: null, gift: 'welcome' },
   { id: 'witch', price: null, gift: 'halloween' },
+  { id: 'jiaozi', price: null, gift: 'dongzhi' },
+  { id: 'santa', price: null, gift: 'christmas' },
+  { id: 'goat', price: null, gift: 'lny' },
+  { id: 'tangyuan', price: null, gift: 'lantern' },
+  { id: 'cake', price: null, gift: 'birthday' },
+  { id: 'pumpkin', price: null, gift: 'halloween27' },
+  // earned by playing, never bought (see ACHIEVEMENTS)
+  { id: 'nightcap', price: null, earn: 'streak' },
+  { id: 'gradcap', price: null, earn: 'level100' },
+  { id: 'halo', price: null, earn: 'album' },
 ];
 
-/** When each gift can be opened (YYYY-MM-DD), or null for at once. */
-export const GIFTS = { welcome: null, halloween: '2026-10-31' };
+/** The hats the mystery gift (every 25th level) can bring: the commons, cheapest first. */
+export const MYSTERY_HATS = ['beret', 'flowers', 'party', 'straw', 'chef'];
+/** What the mystery gift brings once she has every one of them. */
+export const MYSTERY_COINS = 300;
 
 /** The animal a hat goes on when the rider is the girl and she has never ridden one: a try-on. */
 export const TRY_ON = 'bunny';
@@ -171,9 +185,29 @@ export const shop = {
   // ------------------------------------------------ gifts
 
   claimed() { return store.json('shop.claimed') ?? []; },
+  /** The day gift `item` arrives (YYYY-MM-DD), null for at once, or undefined when there's no day for it. */
+  giftDate(item) {
+    if (!item?.gift) return undefined;
+    if (item.gift === 'welcome') return null;
+    if (item.gift === 'birthday') return personalDate('birthday') ?? undefined;
+    return festivalFor(`hat:${item.id}`)?.d;
+  },
   /** The gift has arrived (its day has come). */
-  giftOpen(item) { return !!item?.gift && (GIFTS[item.gift] == null || today() >= GIFTS[item.gift]); },
-  /** Gift hats that have arrived and not been opened yet, oldest first. */
+  giftOpen(item) {
+    const d = this.giftDate(item);
+    return d === null || (d !== undefined && today() >= d);
+  },
+  /** Shown in the shop's gift row: hers, ready to open, earned by playing, or the next one coming. */
+  giftShown(item) {
+    if (this.owns('hat', item.id) || item.earn || this.giftOpen(item)) return true;
+    return item.id === this.nextGift()?.id;
+  },
+  /** The next dated gift still to come, for the teaser card. */
+  nextGift() {
+    return HAT_ITEMS.filter(i => this.giftDate(i) && !this.giftOpen(i))
+      .sort((a, b) => (this.giftDate(a) < this.giftDate(b) ? -1 : 1))[0] ?? null;
+  },
+  /** Dated gift hats that have arrived and not been opened yet, oldest first. */
   pendingGifts() {
     const done = this.claimed();
     return HAT_ITEMS.filter(i => this.giftOpen(i) && !done.includes(i.gift));
@@ -186,6 +220,36 @@ export const shop = {
     this.equip('hat', item.id);
     return true;
   },
+
+  /**
+   * Gives an item without coins (an achievement, the mystery gift) and queues its popup, which
+   * shows the next time nothing else is on screen. Returns false when she has it already.
+   */
+  grant(kind, id, reason, noteId = null) {
+    if (this.owns(kind, id)) return false;
+    store.set('shop.owned', [...this.owned(), `${kind}:${id}`]);
+    store.set('shop.queue', [...this.queue(), { kind, id, reason, noteId }]);
+    emit();
+    return true;
+  },
+  /** Coins as a gift (the mystery gift's fallback): unlike add(), not counted as earned. */
+  gift(n, reason, noteId = null) {
+    if (!(n > 0)) return;
+    store.set('coins', this.coins + n);
+    store.set('shop.queue', [...this.queue(), { kind: 'coins', n, reason, noteId }]);
+    emit();
+  },
+  /** Gifts waiting for their popup, oldest first. */
+  queue() { const q = store.json('shop.queue'); return Array.isArray(q) ? q : []; },
+  /** The popup for the oldest queued gift is showing: it leaves the queue (a hat goes on). */
+  unqueue() {
+    const [first, ...rest] = this.queue();
+    store.set('shop.queue', rest);
+    if (first?.kind === 'hat') this.equip('hat', first.id);
+    return first;
+  },
+  /** Something waits to be opened: the shop button wears a dot. */
+  get giftWaiting() { return this.pendingGifts().length > 0 || this.queue().length > 0; },
 
   /** Calls `fn` whenever coins or the equipped items change. */
   onChange(fn) { listeners.add(fn); },

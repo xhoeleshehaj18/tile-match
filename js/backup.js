@@ -35,6 +35,8 @@ const KEYS = [
   'levels.gravitySeen', 'big.gravitySeen',
   // v30: hats, which each animal wears, the gifts opened, and the last animal she rode
   'shop.hats', 'shop.claimed', 'shop.lastAnimal',
+  // v31: gifts waiting for their popup, what she has seen in the shop, the mystery gifts given
+  'shop.queue', 'shop.seen', 'shop.mystery',
 ];
 const isBoard = k => k === 'board' || k.endsWith('.board');
 
